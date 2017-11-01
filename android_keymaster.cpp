@@ -19,12 +19,12 @@
 #include <assert.h>
 #include <string.h>
 
-#include <cstddef>
+#include <stddef.h>
 
 #include <openssl/rand.h>
 #include <openssl/x509.h>
 
-#include <UniquePtr.h>
+#include <keymaster/UniquePtr.h>
 
 #include <keymaster/android_keymaster_utils.h>
 #include <keymaster/key_factory.h>
@@ -40,8 +40,8 @@ namespace keymaster {
 
 namespace {
 
-const uint8_t MAJOR_VER = 1;
-const uint8_t MINOR_VER = 1;
+const uint8_t MAJOR_VER = 2;
+const uint8_t MINOR_VER = 0;
 const uint8_t SUBMINOR_VER = 0;
 
 keymaster_error_t CheckVersionInfo(const AuthorizationSet& tee_enforced,
@@ -66,7 +66,7 @@ keymaster_error_t CheckVersionInfo(const AuthorizationSet& tee_enforced,
 }  // anonymous namespace
 
 AndroidKeymaster::AndroidKeymaster(KeymasterContext* context, size_t operation_table_size)
-    : context_(context), operation_table_(new OperationTable(operation_table_size)) {}
+    : context_(context), operation_table_(new(std::nothrow) OperationTable(operation_table_size)) {}
 
 AndroidKeymaster::~AndroidKeymaster() {}
 
@@ -402,6 +402,12 @@ void AndroidKeymaster::AttestKey(const AttestKeyRequest& request, AttestKeyRespo
     if (response->error != KM_ERROR_OK)
         return;
 
+    keymaster_blob_t attestation_application_id;
+    if (request.attest_params.GetTagValue(TAG_ATTESTATION_APPLICATION_ID,
+                                          &attestation_application_id)) {
+        sw_enforced.push_back(TAG_ATTESTATION_APPLICATION_ID, attestation_application_id);
+    }
+
     response->error = key->GenerateAttestation(*context_, request.attest_params, tee_enforced,
                                                sw_enforced, &response->certificate_chain);
 }
@@ -449,6 +455,12 @@ void AndroidKeymaster::DeleteAllKeys(const DeleteAllKeysRequest&, DeleteAllKeysR
     if (!response)
         return;
     response->error = context_->DeleteAllKeys();
+}
+
+void AndroidKeymaster::Configure(const ConfigureRequest& request, ConfigureResponse* response) {
+    if (!response)
+        return;
+    response->error = context_->SetSystemVersion(request.os_version, request.os_patchlevel);
 }
 
 bool AndroidKeymaster::has_operation(keymaster_operation_handle_t op_handle) const {

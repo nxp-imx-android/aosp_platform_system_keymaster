@@ -17,6 +17,7 @@
 #include <keymaster/soft_keymaster_context.h>
 
 #include <memory>
+
 #include <time.h>
 
 #include <openssl/aes.h>
@@ -340,11 +341,8 @@ keymaster_error_t SoftKeymasterContext::SetHardwareDevice(keymaster1_device_t* k
     rsa_factory_.reset(new RsaKeymaster1KeyFactory(this, km1_engine_.get()));
     ec_factory_.reset(new EcdsaKeymaster1KeyFactory(this, km1_engine_.get()));
 
-    // All AES and HMAC operations should be passed directly to the keymaster1 device.  Explicitly
-    // do not handle them, to provoke errors in case the higher layers fail to send them to the
-    // device.
-    aes_factory_.reset(nullptr);
-    hmac_factory_.reset(nullptr);
+    // Use default HMAC and AES key factories. Higher layers will pass HMAC/AES keys/ops that are
+    // supported by the hardware to it and other ones to the software-only factory.
 
     return KM_ERROR_OK;
 }
@@ -684,19 +682,23 @@ keymaster_error_t SoftKeymasterContext::ParseKeyBlob(const KeymasterKeyBlob& blo
     else if (km0_engine_)
         return ParseKeymaster0HwBlob(blob, key_material, hw_enforced, sw_enforced);
 
-    LOG_E("Failed to parse key; not a valid software blob, no hardware module configured", 0);
     return KM_ERROR_INVALID_KEY_BLOB;
 }
 
 keymaster_error_t SoftKeymasterContext::DeleteKey(const KeymasterKeyBlob& blob) const {
     if (km1_engine_) {
-        keymaster_error_t error = km1_engine_->DeleteKey(blob);
-        if (error == KM_ERROR_INVALID_KEY_BLOB) {
-            // Note that we succeed on invalid blob, because it probably just indicates that the
-            // blob is a software blob, not a hardware blob.
-            error = KM_ERROR_OK;
+        // HACK. Due to a bug with Qualcomm's Keymaster implementation, which causes the device to
+        // reboot if we pass it a key blob it doesn't understand, we need to check for software
+        // keys.  If it looks like a software key there's nothing to do so we just return.
+        KeymasterKeyBlob key_material;
+        AuthorizationSet hw_enforced, sw_enforced;
+        keymaster_error_t error = DeserializeIntegrityAssuredBlob_NoHmacCheck(
+            blob, &key_material, &hw_enforced, &sw_enforced);
+        if (error == KM_ERROR_OK) {
+            return KM_ERROR_OK;
         }
-        return error;
+
+        return km1_engine_->DeleteKey(blob);
     }
 
     if (km0_engine_) {

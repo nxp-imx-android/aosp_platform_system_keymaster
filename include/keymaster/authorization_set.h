@@ -17,7 +17,7 @@
 #ifndef SYSTEM_KEYMASTER_AUTHORIZATION_SET_H_
 #define SYSTEM_KEYMASTER_AUTHORIZATION_SET_H_
 
-#include <UniquePtr.h>
+#include <keymaster/UniquePtr.h>
 
 #include <hardware/keymaster_defs.h>
 #include <keymaster/keymaster_tags.h>
@@ -78,8 +78,9 @@ class AuthorizationSet : public Serializable, public keymaster_key_param_set_t {
     // Copy constructor.
     AuthorizationSet(const AuthorizationSet& set) : Serializable(), indirect_data_(nullptr) {
         elems_ = nullptr;
-        Reinitialize(set.elems_, set.elems_size_);
         error_ = set.error_;
+        if (error_ != OK) return;
+        Reinitialize(set.elems_, set.elems_size_);
     }
 
     // Move constructor.

@@ -28,7 +28,7 @@
 #include <keymaster/android_keymaster.h>
 #include <keymaster/soft_keymaster_context.h>
 
-#include <UniquePtr.h>
+#include <keymaster/UniquePtr.h>
 
 namespace keymaster {
 
@@ -49,7 +49,6 @@ class SoftKeymasterDevice {
   public:
     SoftKeymasterDevice();
 
-    // Public only for testing.
     explicit SoftKeymasterDevice(SoftKeymasterContext* context);
 
     /**
@@ -81,6 +80,8 @@ class SoftKeymasterDevice {
 
     bool configured() const { return configured_; }
 
+    bool supports_all_digests() { return supports_all_digests_; }
+
     typedef std::pair<keymaster_algorithm_t, keymaster_purpose_t> AlgPurposePair;
     typedef std::map<AlgPurposePair, std::vector<keymaster_digest_t>> DigestMap;
 
@@ -105,7 +106,7 @@ class SoftKeymasterDevice {
      * keymaster_device.
      */
 
-    // Keymaster1 methods
+    // Keymaster1 methods -- needed for testing.
     static keymaster_error_t get_supported_algorithms(const keymaster1_device_t* dev,
                                                       keymaster_algorithm_t** algorithms,
                                                       size_t* algorithms_length);
@@ -247,6 +248,7 @@ class SoftKeymasterDevice {
     std::string module_name_;
     hw_module_t updated_module_;
     bool configured_;
+    bool supports_all_digests_;
 };
 
 }  // namespace keymaster
