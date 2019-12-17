@@ -111,6 +111,10 @@ keymaster_error_t PureSoftKeymasterContext::CreateKeyBlob(const AuthorizationSet
                                                       KeymasterKeyBlob* blob,
                                                       AuthorizationSet* hw_enforced,
                                                       AuthorizationSet* sw_enforced) const {
+    if (key_description.GetTagValue(TAG_ROLLBACK_RESISTANCE)) {
+        return KM_ERROR_ROLLBACK_RESISTANCE_UNAVAILABLE;
+    }
+
     keymaster_error_t error = SetKeyBlobAuthorizations(key_description, origin, os_version_,
                                                        os_patchlevel_, hw_enforced, sw_enforced);
     if (error != KM_ERROR_OK)
@@ -281,7 +285,7 @@ keymaster_error_t PureSoftKeymasterContext::UnwrapKey(
     UniquePtr<Key> key;
     auto wrapping_key_params = AuthorizationSetBuilder()
                                    .RsaEncryptionKey(2048, 65537)
-                                   .Digest(KM_DIGEST_SHA1)
+                                   .Digest(KM_DIGEST_SHA_2_256)
                                    .Padding(KM_PAD_RSA_OAEP)
                                    .Authorization(TAG_PURPOSE, KM_PURPOSE_WRAP)
                                    .build();
