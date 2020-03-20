@@ -15,23 +15,17 @@
 ** limitations under the License.
 */
 
-#ifndef INCLUDE_KEYMASTER_NEW_
-#define INCLUDE_KEYMASTER_NEW_
+#ifndef SOFTWARE_CONTEXT_SOFT_ATTESTATION_CERT_H_
+#define SOFTWARE_CONTEXT_SOFT_ATTESTATION_CERT_H_
 
-#include <stddef.h>
+#include <hardware/keymaster_defs.h>
 
-namespace std {
-struct nothrow_t;
-extern const nothrow_t nothrow;
-}
+namespace keymaster {
 
-#ifndef _NOEXCEPT
-#define _NOEXCEPT
-#endif
+const keymaster_key_blob_t* getAttestationKey(keymaster_algorithm_t algorithm,
+                                              keymaster_error_t* error);
+const keymaster_cert_chain_t* getAttestationChain(keymaster_algorithm_t algorithm,
+                                                  keymaster_error_t* error);
 
-void* operator new(size_t __sz, const std::nothrow_t&) _NOEXCEPT;
-void* operator new[](size_t __sz, const std::nothrow_t&) _NOEXCEPT;
-void operator delete(void* ptr);
-void operator delete[](void* ptr);
-
-#endif  // INCLUDE_KEYMASTER_NEW_
+}  // namespace keymaster
+#endif  // SOFTWARE_CONTEXT_SOFT_ATTESTATION_CERT_H_
