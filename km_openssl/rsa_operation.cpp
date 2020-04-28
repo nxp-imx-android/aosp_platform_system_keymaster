@@ -61,7 +61,7 @@ const keymaster_digest_t* RsaOperationFactory::SupportedDigests(size_t* digest_c
 
 RsaOperation* RsaOperationFactory::CreateRsaOperation(Key&& key,
                                                       const AuthorizationSet& begin_params,
-                                                      keymaster_error_t* error) {
+                                                      keymaster_error_t* error) const {
     keymaster_padding_t padding;
     if (!GetAndValidatePadding(begin_params, key, &padding, error)) return nullptr;
 
@@ -69,10 +69,7 @@ RsaOperation* RsaOperationFactory::CreateRsaOperation(Key&& key,
                            padding == KM_PAD_RSA_OAEP);
 
     keymaster_digest_t digest = KM_DIGEST_NONE;
-
-    if (require_digest && !GetAndValidateDigest(begin_params, key, &digest, error, true)) {
-        return nullptr;
-    }
+    if (require_digest && !GetAndValidateDigest(begin_params, key, &digest, error)) return nullptr;
 
     UniquePtr<EVP_PKEY, EVP_PKEY_Delete> rsa(GetRsaKey(move(key), error));
     if (!rsa.get()) return nullptr;
@@ -93,7 +90,7 @@ RsaDigestingOperationFactory::SupportedPaddingModes(size_t* padding_mode_count) 
 
 RsaOperation* RsaCryptingOperationFactory::CreateRsaOperation(Key&& key,
                                                               const AuthorizationSet& begin_params,
-                                                              keymaster_error_t* error) {
+                                                              keymaster_error_t* error) const {
     UniquePtr<RsaOperation> op(
         RsaOperationFactory::CreateRsaOperation(move(key), begin_params, error));
     if (op.get()) {
