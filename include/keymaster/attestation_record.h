@@ -25,7 +25,7 @@
 
 namespace keymaster {
 
-constexpr uint kCurrentKeymasterVersion = 41;
+constexpr uint kCurrentKeymasterVersion = 4;
 
 struct stack_st_ASN1_TYPE_Delete {
     void operator()(stack_st_ASN1_TYPE* p) { sk_ASN1_TYPE_free(p); }

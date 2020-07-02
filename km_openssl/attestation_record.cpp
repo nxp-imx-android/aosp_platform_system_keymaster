@@ -26,7 +26,7 @@
 
 namespace keymaster {
 
-constexpr uint kCurrentAttestationVersion = 4;
+constexpr uint kCurrentAttestationVersion = 3;
 constexpr size_t kMaximumAttestationChallengeLength = 128;
 
 IMPLEMENT_ASN1_FUNCTIONS(KM_ROOT_OF_TRUST);
