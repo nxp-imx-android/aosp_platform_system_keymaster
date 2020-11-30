@@ -328,6 +328,8 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         case KM_TAG_ATTESTATION_ID_MANUFACTURER:
         case KM_TAG_ATTESTATION_ID_MODEL:
         case KM_TAG_DEVICE_UNIQUE_ATTESTATION:
+        case KM_TAG_CERTIFICATE_SUBJECT:
+        case KM_TAG_CERTIFICATE_SERIAL:
             return KM_ERROR_INVALID_KEY_BLOB;
 
         /* Tags used for cryptographic parameters in keygen.  Nothing to enforce. */
@@ -371,16 +373,21 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         case KM_TAG_APPLICATION_ID:
         case KM_TAG_OS_VERSION:
         case KM_TAG_OS_PATCHLEVEL:
+        case KM_TAG_BOOT_PATCHLEVEL:
+        case KM_TAG_VENDOR_PATCHLEVEL:
+        case KM_TAG_STORAGE_KEY:
 
         /* Ignored pending removal */
         case KM_TAG_ALL_USERS:
 
-        /* TODO(swillden): Handle these */
+        /* Tags that are not enforced by begin */
         case KM_TAG_INCLUDE_UNIQUE_ID:
         case KM_TAG_UNIQUE_ID:
         case KM_TAG_RESET_SINCE_ID_ROTATION:
         case KM_TAG_ALLOW_WHILE_ON_BODY:
         case KM_TAG_TRUSTED_CONFIRMATION_REQUIRED:
+        case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
+        case KM_TAG_CONFIRMATION_TOKEN:
             break;
 
         case KM_TAG_IDENTITY_CREDENTIAL_KEY:

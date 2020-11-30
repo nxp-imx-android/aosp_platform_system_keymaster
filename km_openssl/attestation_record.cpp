@@ -26,7 +26,6 @@
 
 namespace keymaster {
 
-constexpr uint kCurrentAttestationVersion = 4;
 constexpr size_t kMaximumAttestationChallengeLength = 128;
 
 IMPLEMENT_ASN1_FUNCTIONS(KM_ROOT_OF_TRUST);
@@ -128,6 +127,8 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
         case KM_TAG_MAC_LENGTH:
         case KM_TAG_ATTESTATION_CHALLENGE:
         case KM_TAG_RESET_SINCE_ID_ROTATION:
+        case KM_TAG_CERTIFICATE_SERIAL:
+        case KM_TAG_CERTIFICATE_SUBJECT:
 
         /* Tags ignored because they have no meaning off-device */
         case KM_TAG_USER_ID:
@@ -193,6 +194,12 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
         case KM_TAG_MIN_MAC_LENGTH:
             integer_ptr = &record->min_mac_length;
             break;
+        case KM_TAG_BOOT_PATCHLEVEL:
+            integer_ptr = &record->boot_patch_level;
+            break;
+        case KM_TAG_VENDOR_PATCHLEVEL:
+            integer_ptr = &record->vendor_patchlevel;
+            break;
 
         /* Non-repeating long unsigned integers */
         case KM_TAG_RSA_PUBLIC_EXPONENT:
@@ -247,6 +254,12 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
         case KM_TAG_IDENTITY_CREDENTIAL_KEY:
             bool_ptr = &record->identity_credential_key;
             break;
+        case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
+            bool_ptr = &record->trusted_user_presence_required;
+            break;
+        case KM_TAG_STORAGE_KEY:
+            bool_ptr = &record->storage_key;
+            break;
 
         /* Byte arrays*/
         case KM_TAG_APPLICATION_ID:
@@ -278,6 +291,9 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
             break;
         case KM_TAG_ATTESTATION_ID_MODEL:
             string_ptr = &record->attestation_id_model;
+            break;
+        case KM_TAG_CONFIRMATION_TOKEN:
+            string_ptr = &record->confirmation_token;
             break;
         }
 
@@ -382,8 +398,7 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
 keymaster_error_t
 build_attestation_record(const AuthorizationSet& attestation_params, AuthorizationSet sw_enforced,
                          AuthorizationSet tee_enforced, const AttestationRecordContext& context,
-                         const uint keymaster_version, UniquePtr<uint8_t[]>* asn1_key_desc,
-                         size_t* asn1_key_desc_len) {
+                         UniquePtr<uint8_t[]>* asn1_key_desc, size_t* asn1_key_desc_len) {
     assert(asn1_key_desc && asn1_key_desc_len);
 
     UniquePtr<KM_KEY_DESCRIPTION, KM_KEY_DESCRIPTION_Delete> key_desc(KM_KEY_DESCRIPTION_new());
@@ -422,9 +437,11 @@ build_attestation_record(const AuthorizationSet& attestation_params, Authorizati
         return TranslateLastOpenSslError();
     }
 
-    if (!ASN1_INTEGER_set(key_desc->attestation_version, kCurrentAttestationVersion) ||
+    if (!ASN1_INTEGER_set(key_desc->attestation_version,
+                          version_to_attestation_version(context.GetKmVersion())) ||
         !ASN1_ENUMERATED_set(key_desc->attestation_security_level, context.GetSecurityLevel()) ||
-        !ASN1_INTEGER_set(key_desc->keymaster_version, keymaster_version) ||
+        !ASN1_INTEGER_set(key_desc->keymaster_version,
+                          version_to_attestation_km_version(context.GetKmVersion())) ||
         !ASN1_ENUMERATED_set(key_desc->keymaster_security_level, context.GetSecurityLevel())) {
         return TranslateLastOpenSslError();
     }
@@ -516,14 +533,6 @@ build_attestation_record(const AuthorizationSet& attestation_params, Authorizati
     return KM_ERROR_OK;
 }
 
-keymaster_error_t
-build_attestation_record(const AuthorizationSet& attestation_params, AuthorizationSet sw_enforced,
-                         AuthorizationSet tee_enforced, const AttestationRecordContext& context,
-                         UniquePtr<uint8_t[]>* asn1_key_desc, size_t* asn1_key_desc_len) {
-    return build_attestation_record(attestation_params, sw_enforced, tee_enforced, context,
-                                    kCurrentKeymasterVersion, asn1_key_desc, asn1_key_desc_len);
-}
-
 // Copy all enumerated values with the specified tag from stack to auth_list.
 static bool get_repeated_enums(const ASN1_INTEGER_SET* stack, keymaster_tag_t tag,
                                AuthorizationSet* auth_list) {
@@ -553,7 +562,8 @@ static bool get_ulong(const ASN1_INTEGER* asn1_int, keymaster_tag_t tag,
     UniquePtr<BIGNUM, BIGNUM_Delete> bn(ASN1_INTEGER_to_BN(asn1_int, nullptr));
     if (!bn.get())
         return false;
-    uint64_t ulong = BN_get_word(bn.get());
+    uint64_t ulong = 0;
+    BN_get_u64(bn.get(), &ulong);
     return auth_list->push_back(keymaster_param_long(tag, ulong));
 }
 
@@ -647,6 +657,36 @@ keymaster_error_t extract_auth_list(const KM_AUTH_LIST* record, AuthorizationSet
 
     // identity credential key
     if (record->identity_credential_key && !auth_list->push_back(TAG_IDENTITY_CREDENTIAL_KEY))
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+
+    // storage key
+    if (record->storage_key && !auth_list->push_back(TAG_STORAGE_KEY))
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+
+    // trusted user presence required
+    if (record->trusted_user_presence_required &&
+        !auth_list->push_back(TAG_TRUSTED_USER_PRESENCE_REQUIRED))
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+
+    // trusted confirmation required
+    if (record->trusted_confirmation_required &&
+        !auth_list->push_back(TAG_TRUSTED_CONFIRMATION_REQUIRED))
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+
+    // boot patch level
+    if (record->boot_patch_level &&
+        !auth_list->push_back(TAG_BOOT_PATCHLEVEL, ASN1_INTEGER_get(record->boot_patch_level)))
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+
+    // vendor patch level
+    if (record->vendor_patchlevel &&
+        !auth_list->push_back(TAG_VENDOR_PATCHLEVEL, ASN1_INTEGER_get(record->vendor_patchlevel)))
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+
+    // confirmation token
+    if (record->confirmation_token &&
+        !auth_list->push_back(TAG_CONFIRMATION_TOKEN, record->confirmation_token->data,
+                              record->confirmation_token->length))
         return KM_ERROR_MEMORY_ALLOCATION_FAILED;
 
     // Creation date time
