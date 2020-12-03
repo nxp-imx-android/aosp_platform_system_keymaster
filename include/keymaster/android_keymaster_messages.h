@@ -657,6 +657,22 @@ struct DeleteAllKeysRequest : public EmptyKeymasterRequest {
 
 using DeleteAllKeysResponse = EmptyKeymasterResponse;
 
+struct DestroyAttestationIdsRequest: public KeymasterMessage {
+    explicit DestroyAttestationIdsRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    size_t SerializedSize() const override { return 0; }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t*) const override { return buf; }
+    bool Deserialize(const uint8_t**, const uint8_t*) override { return true; };
+};
+
+struct DestroyAttestationIdsResponse: public KeymasterResponse {
+    explicit DestroyAttestationIdsResponse(int32_t ver) : KeymasterResponse(ver) {}
+
+    size_t NonErrorSerializedSize() const override { return 0; }
+    uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t*) const override { return buf; }
+    bool NonErrorDeserialize(const uint8_t**, const uint8_t*) override { return true; }
+};
+
 struct GetVersionRequest : public EmptyKeymasterRequest {
     // GetVersionRequest ctor takes a version arg so it has the same signature as others, but the
     // value is ignored because it is not not versionable.
