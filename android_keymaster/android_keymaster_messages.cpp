@@ -77,16 +77,13 @@ size_t KeymasterResponse::SerializedSize() const {
 
 uint8_t* KeymasterResponse::Serialize(uint8_t* buf, const uint8_t* end) const {
     buf = append_uint32_to_buf(buf, end, static_cast<uint32_t>(error));
-    if (error == KM_ERROR_OK)
-        buf = NonErrorSerialize(buf, end);
+    if (error == KM_ERROR_OK) buf = NonErrorSerialize(buf, end);
     return buf;
 }
 
 bool KeymasterResponse::Deserialize(const uint8_t** buf_ptr, const uint8_t* end) {
-    if (!copy_uint32_from_buf(buf_ptr, end, &error))
-        return false;
-    if (error != KM_ERROR_OK)
-        return true;
+    if (!copy_uint32_from_buf(buf_ptr, end, &error)) return false;
+    if (error != KM_ERROR_OK) return true;
     return NonErrorDeserialize(buf_ptr, end);
 }
 
@@ -175,15 +172,13 @@ size_t BeginOperationResponse::NonErrorSerializedSize() const {
 
 uint8_t* BeginOperationResponse::NonErrorSerialize(uint8_t* buf, const uint8_t* end) const {
     buf = append_uint64_to_buf(buf, end, op_handle);
-    if (message_version > 0)
-        buf = output_params.Serialize(buf, end);
+    if (message_version > 0) buf = output_params.Serialize(buf, end);
     return buf;
 }
 
 bool BeginOperationResponse::NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) {
     bool retval = copy_uint64_from_buf(buf_ptr, end, &op_handle);
-    if (retval && message_version > 0)
-        retval = output_params.Deserialize(buf_ptr, end);
+    if (retval && message_version > 0) retval = output_params.Deserialize(buf_ptr, end);
     return retval;
 }
 
@@ -197,15 +192,13 @@ size_t UpdateOperationRequest::SerializedSize() const {
 uint8_t* UpdateOperationRequest::Serialize(uint8_t* buf, const uint8_t* end) const {
     buf = append_uint64_to_buf(buf, end, op_handle);
     buf = input.Serialize(buf, end);
-    if (message_version > 0)
-        buf = additional_params.Serialize(buf, end);
+    if (message_version > 0) buf = additional_params.Serialize(buf, end);
     return buf;
 }
 
 bool UpdateOperationRequest::Deserialize(const uint8_t** buf_ptr, const uint8_t* end) {
     bool retval = copy_uint64_from_buf(buf_ptr, end, &op_handle) && input.Deserialize(buf_ptr, end);
-    if (retval && message_version > 0)
-        retval = additional_params.Deserialize(buf_ptr, end);
+    if (retval && message_version > 0) retval = additional_params.Deserialize(buf_ptr, end);
     return retval;
 }
 
@@ -232,19 +225,15 @@ size_t UpdateOperationResponse::NonErrorSerializedSize() const {
 
 uint8_t* UpdateOperationResponse::NonErrorSerialize(uint8_t* buf, const uint8_t* end) const {
     buf = output.Serialize(buf, end);
-    if (message_version > 0)
-        buf = append_uint32_to_buf(buf, end, input_consumed);
-    if (message_version > 1)
-        buf = output_params.Serialize(buf, end);
+    if (message_version > 0) buf = append_uint32_to_buf(buf, end, input_consumed);
+    if (message_version > 1) buf = output_params.Serialize(buf, end);
     return buf;
 }
 
 bool UpdateOperationResponse::NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) {
     bool retval = output.Deserialize(buf_ptr, end);
-    if (retval && message_version > 0)
-        retval = copy_uint32_from_buf(buf_ptr, end, &input_consumed);
-    if (retval && message_version > 1)
-        retval = output_params.Deserialize(buf_ptr, end);
+    if (retval && message_version > 0) retval = copy_uint32_from_buf(buf_ptr, end, &input_consumed);
+    if (retval && message_version > 1) retval = output_params.Deserialize(buf_ptr, end);
     return retval;
 }
 
@@ -272,20 +261,16 @@ size_t FinishOperationRequest::SerializedSize() const {
 uint8_t* FinishOperationRequest::Serialize(uint8_t* buf, const uint8_t* end) const {
     buf = append_uint64_to_buf(buf, end, op_handle);
     buf = signature.Serialize(buf, end);
-    if (message_version > 0)
-        buf = additional_params.Serialize(buf, end);
-    if (message_version > 2)
-        buf = input.Serialize(buf, end);
+    if (message_version > 0) buf = additional_params.Serialize(buf, end);
+    if (message_version > 2) buf = input.Serialize(buf, end);
     return buf;
 }
 
 bool FinishOperationRequest::Deserialize(const uint8_t** buf_ptr, const uint8_t* end) {
     bool retval =
         copy_uint64_from_buf(buf_ptr, end, &op_handle) && signature.Deserialize(buf_ptr, end);
-    if (retval && message_version > 0)
-        retval = additional_params.Deserialize(buf_ptr, end);
-    if (retval && message_version > 2)
-        retval = input.Deserialize(buf_ptr, end);
+    if (retval && message_version > 0) retval = additional_params.Deserialize(buf_ptr, end);
+    if (retval && message_version > 2) retval = input.Deserialize(buf_ptr, end);
     return retval;
 }
 
@@ -298,15 +283,13 @@ size_t FinishOperationResponse::NonErrorSerializedSize() const {
 
 uint8_t* FinishOperationResponse::NonErrorSerialize(uint8_t* buf, const uint8_t* end) const {
     buf = output.Serialize(buf, end);
-    if (message_version > 1)
-        buf = output_params.Serialize(buf, end);
+    if (message_version > 1) buf = output_params.Serialize(buf, end);
     return buf;
 }
 
 bool FinishOperationResponse::NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) {
     bool retval = output.Deserialize(buf_ptr, end);
-    if (retval && message_version > 1)
-        retval = output_params.Deserialize(buf_ptr, end);
+    if (retval && message_version > 1) retval = output_params.Deserialize(buf_ptr, end);
     return retval;
 }
 
@@ -436,25 +419,15 @@ size_t GetVersionResponse::NonErrorSerializedSize() const {
 }
 
 uint8_t* GetVersionResponse::NonErrorSerialize(uint8_t* buf, const uint8_t* end) const {
-    if (buf + NonErrorSerializedSize() <= end) {
-        *buf++ = major_ver;
-        *buf++ = minor_ver;
-        *buf++ = subminor_ver;
-    } else {
-        buf += NonErrorSerializedSize();
-    }
-    return buf;
+    buf = append_uint32_to_buf(buf, end, major_ver);
+    buf = append_uint32_to_buf(buf, end, minor_ver);
+    return append_uint32_to_buf(buf, end, subminor_ver);
 }
 
 bool GetVersionResponse::NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) {
-    if (*buf_ptr + NonErrorSerializedSize() > end)
-        return false;
-    const uint8_t* tmp = *buf_ptr;
-    major_ver = *tmp++;
-    minor_ver = *tmp++;
-    subminor_ver = *tmp++;
-    *buf_ptr = tmp;
-    return true;
+    return copy_uint32_from_buf(buf_ptr, end, &major_ver) &&
+           copy_uint32_from_buf(buf_ptr, end, &minor_ver) &&
+           copy_uint32_from_buf(buf_ptr, end, &subminor_ver);
 }
 
 AttestKeyRequest::~AttestKeyRequest() {
@@ -486,8 +459,7 @@ AttestKeyResponse::~AttestKeyResponse() {
 
 const size_t kMaxChainEntryCount = 10;
 bool AttestKeyResponse::AllocateChain(size_t entry_count) {
-    if (entry_count > kMaxChainEntryCount)
-        return false;
+    if (entry_count > kMaxChainEntryCount) return false;
 
     if (certificate_chain.entries) {
         for (size_t i = 0; i < certificate_chain.entry_count; ++i)
@@ -532,8 +504,7 @@ bool AttestKeyResponse::NonErrorDeserialize(const uint8_t** buf_ptr, const uint8
     for (size_t i = 0; i < certificate_chain.entry_count; ++i) {
         UniquePtr<uint8_t[]> data;
         size_t data_length;
-        if (!copy_size_and_data_from_buf(buf_ptr, end, &data_length, &data))
-            return false;
+        if (!copy_size_and_data_from_buf(buf_ptr, end, &data_length, &data)) return false;
         certificate_chain.entries[i].data = data.release();
         certificate_chain.entries[i].data_length = data_length;
     }
