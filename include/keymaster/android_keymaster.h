@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef SYSTEM_KEYMASTER_ANDROID_KEYMASTER_H_
-#define SYSTEM_KEYMASTER_ANDROID_KEYMASTER_H_
+#pragma once
 
 #include <keymaster/android_keymaster_messages.h>
 #include <keymaster/authorization_set.h>
@@ -89,18 +88,27 @@ class AndroidKeymaster {
 
     EarlyBootEndedResponse EarlyBootEnded();
     DeviceLockedResponse DeviceLocked(const DeviceLockedRequest& request);
+    GetVersion2Response GetVersion2(const GetVersion2Request& request);
 
     bool has_operation(keymaster_operation_handle_t op_handle) const;
 
+    // Returns the message version negotiated in GetVersion2.  All response messages should have
+    // this passed to their constructors.  This is done automatically for the methods that return a
+    // response by value.  The caller must do it for the methods that take a response pointer.
+    uint32_t message_version() const { return message_version_; }
+
   private:
     keymaster_error_t LoadKey(const keymaster_key_blob_t& key_blob,
-                              const AuthorizationSet& additional_params,
-                              const KeyFactory** factory, UniquePtr<Key>* key);
+                              const AuthorizationSet& additional_params, const KeyFactory** factory,
+                              UniquePtr<Key>* key);
 
     UniquePtr<KeymasterContext> context_;
     UniquePtr<OperationTable> operation_table_;
+
+    // If the caller doesn't bother to use GetVersion2 or GetVersion to configure the message
+    // version, assume kDefaultVersion, i.e. assume the client and server always support the
+    // latest default, which is the latest, except when experimental features are being added.
+    uint32_t message_version_ = kDefaultMessageVersion;
 };
 
 }  // namespace keymaster
-
-#endif  //  SYSTEM_KEYMASTER_ANDROID_KEYMASTER_H_

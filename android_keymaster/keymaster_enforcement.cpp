@@ -23,9 +23,9 @@
 #include <openssl/evp.h>
 
 #include <hardware/hw_auth_token.h>
+#include <keymaster/List.h>
 #include <keymaster/android_keymaster_utils.h>
 #include <keymaster/logger.h>
-#include <keymaster/List.h>
 
 namespace keymaster {
 
@@ -86,8 +86,8 @@ static keymaster_error_t authorized_purpose(const keymaster_purpose_t purpose,
     case KM_PURPOSE_SIGN:
     case KM_PURPOSE_DECRYPT:
     case KM_PURPOSE_WRAP:
-        if (auth_set.Contains(TAG_PURPOSE, purpose))
-            return KM_ERROR_OK;
+    case KM_PURPOSE_AGREE_KEY:
+        if (auth_set.Contains(TAG_PURPOSE, purpose)) return KM_ERROR_OK;
         return KM_ERROR_INCOMPATIBLE_PURPOSE;
 
     default:
@@ -130,6 +130,7 @@ keymaster_error_t KeymasterEnforcement::AuthorizeOperation(const keymaster_purpo
         case KM_PURPOSE_SIGN:
         case KM_PURPOSE_DERIVE_KEY:
         case KM_PURPOSE_WRAP:
+        case KM_PURPOSE_AGREE_KEY:
             break;
         };
     };
@@ -230,8 +231,7 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
     }
 
     keymaster_error_t error = authorized_purpose(purpose, auth_set);
-    if (error != KM_ERROR_OK)
-        return error;
+    if (error != KM_ERROR_OK) return error;
 
     // If successful, and if key has a min time between ops, this will be set to the time limit
     uint32_t min_ops_timeout = UINT32_MAX;
@@ -245,14 +245,12 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
 
         // KM_TAG_PADDING_OLD and KM_TAG_DIGEST_OLD aren't actually members of the enum, so we can't
         // switch on them.  There's nothing to validate for them, though, so just ignore them.
-        if (param.tag == KM_TAG_PADDING_OLD || param.tag == KM_TAG_DIGEST_OLD)
-            continue;
+        if (param.tag == KM_TAG_PADDING_OLD || param.tag == KM_TAG_DIGEST_OLD) continue;
 
         switch (param.tag) {
 
         case KM_TAG_ACTIVE_DATETIME:
-            if (!activation_date_valid(param.date_time))
-                return KM_ERROR_KEY_NOT_YET_VALID;
+            if (!activation_date_valid(param.date_time)) return KM_ERROR_KEY_NOT_YET_VALID;
             break;
 
         case KM_TAG_ORIGINATION_EXPIRE_DATETIME:
@@ -328,6 +326,8 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         case KM_TAG_ATTESTATION_ID_MANUFACTURER:
         case KM_TAG_ATTESTATION_ID_MODEL:
         case KM_TAG_DEVICE_UNIQUE_ATTESTATION:
+        case KM_TAG_CERTIFICATE_SUBJECT:
+        case KM_TAG_CERTIFICATE_SERIAL:
             return KM_ERROR_INVALID_KEY_BLOB;
 
         /* Tags used for cryptographic parameters in keygen.  Nothing to enforce. */
@@ -350,6 +350,7 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         /* Algorithm specific parameters not used for access control. */
         case KM_TAG_RSA_PUBLIC_EXPONENT:
         case KM_TAG_ECIES_SINGLE_HASH_MODE:
+        case KM_TAG_RSA_OAEP_MGF_DIGEST:
 
         /* Informational tags. */
         case KM_TAG_CREATION_DATETIME:
@@ -371,16 +372,22 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         case KM_TAG_APPLICATION_ID:
         case KM_TAG_OS_VERSION:
         case KM_TAG_OS_PATCHLEVEL:
+        case KM_TAG_BOOT_PATCHLEVEL:
+        case KM_TAG_VENDOR_PATCHLEVEL:
+        case KM_TAG_STORAGE_KEY:
 
         /* Ignored pending removal */
         case KM_TAG_ALL_USERS:
 
-        /* TODO(swillden): Handle these */
+        /* Tags that are not enforced by begin */
         case KM_TAG_INCLUDE_UNIQUE_ID:
         case KM_TAG_UNIQUE_ID:
         case KM_TAG_RESET_SINCE_ID_ROTATION:
         case KM_TAG_ALLOW_WHILE_ON_BODY:
         case KM_TAG_TRUSTED_CONFIRMATION_REQUIRED:
+        case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
+        case KM_TAG_CONFIRMATION_TOKEN:
+        case KM_TAG_USAGE_COUNT_LIMIT:
             break;
 
         case KM_TAG_IDENTITY_CREDENTIAL_KEY:
@@ -430,22 +437,18 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
 }
 
 bool KeymasterEnforcement::MinTimeBetweenOpsPassed(uint32_t min_time_between, const km_id_t keyid) {
-    if (!access_time_map_)
-        return false;
+    if (!access_time_map_) return false;
 
     uint32_t last_access_time;
-    if (!access_time_map_->LastKeyAccessTime(keyid, &last_access_time))
-        return true;
+    if (!access_time_map_->LastKeyAccessTime(keyid, &last_access_time)) return true;
     return min_time_between <= static_cast<int64_t>(get_current_time()) - last_access_time;
 }
 
 bool KeymasterEnforcement::MaxUsesPerBootNotExceeded(const km_id_t keyid, uint32_t max_uses) {
-    if (!access_count_map_)
-        return false;
+    if (!access_count_map_) return false;
 
     uint32_t key_access_count;
-    if (!access_count_map_->KeyAccessCount(keyid, &key_access_count))
-        return true;
+    if (!access_count_map_->KeyAccessCount(keyid, &key_access_count)) return true;
     return key_access_count < max_uses;
 }
 
@@ -511,8 +514,7 @@ bool KeymasterEnforcement::AuthTokenMatches(const AuthProxy& auth_set,
     }
 
     assert(auth_set[auth_type_index].tag == KM_TAG_USER_AUTH_TYPE);
-    if (auth_set[auth_type_index].tag != KM_TAG_USER_AUTH_TYPE)
-        return false;
+    if (auth_set[auth_type_index].tag != KM_TAG_USER_AUTH_TYPE) return false;
 
     uint32_t key_auth_type_mask = auth_set[auth_type_index].integer;
     if ((key_auth_type_mask & token_auth_type) == 0) {
@@ -523,8 +525,7 @@ bool KeymasterEnforcement::AuthTokenMatches(const AuthProxy& auth_set,
 
     if (auth_timeout_index != -1 && is_begin_operation) {
         assert(auth_set[auth_timeout_index].tag == KM_TAG_AUTH_TIMEOUT);
-        if (auth_set[auth_timeout_index].tag != KM_TAG_AUTH_TIMEOUT)
-            return false;
+        if (auth_set[auth_timeout_index].tag != KM_TAG_AUTH_TIMEOUT) return false;
 
         if (auth_token_timed_out(*auth_token, auth_set[auth_timeout_index].integer)) {
             LOG_E("Auth token has timed out", 0);
@@ -561,8 +562,7 @@ bool AccessTimeMap::UpdateKeyAccessTime(km_id_t keyid, uint32_t current_time, ui
             ++iter;
     }
 
-    if (last_access_list_.size() >= max_size_)
-        return false;
+    if (last_access_list_.size() >= max_size_) return false;
 
     AccessTime new_entry;
     new_entry.keyid = keyid;
@@ -589,13 +589,11 @@ bool AccessCountMap::IncrementKeyAccessCount(km_id_t keyid) {
             // operation requests will be rejected and access_count won't be incremented any more.
             // And, besides, UINT64_MAX is huge.  But we ensure that it doesn't wrap anyway, out of
             // an abundance of caution.
-            if (entry.access_count < UINT64_MAX)
-                ++entry.access_count;
+            if (entry.access_count < UINT64_MAX) ++entry.access_count;
             return true;
         }
 
-    if (access_count_list_.size() >= max_size_)
-        return false;
+    if (access_count_list_.size() >= max_size_) return false;
 
     AccessCount new_entry;
     new_entry.keyid = keyid;
