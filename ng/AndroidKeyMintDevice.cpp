@@ -138,6 +138,7 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_RSA_OAEP_MGF_DIGEST:
         case KM_TAG_RSA_PUBLIC_EXPONENT:
         case KM_TAG_UNLOCKED_DEVICE_REQUIRED:
+        case KM_TAG_USAGE_COUNT_LIMIT:
         case KM_TAG_USER_AUTH_TYPE:
         case KM_TAG_USER_SECURE_ID:
         case KM_TAG_VENDOR_PATCHLEVEL:
@@ -236,7 +237,7 @@ ScopedAStatus AndroidKeyMintDevice::importKey(const vector<KeyParameter>& keyPar
     ImportKeyRequest request(impl_->message_version());
     request.key_description.Reinitialize(KmParamSet(keyParams));
     request.key_format = legacy_enum_conversion(keyFormat);
-    request.SetKeyMaterial(keyData.data(), keyData.size());
+    request.key_data = KeymasterKeyBlob(keyData.data(), keyData.size());
 
     ImportKeyResponse response(impl_->message_version());
     impl_->ImportKey(request, &response);
