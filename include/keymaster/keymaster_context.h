@@ -144,9 +144,26 @@ class KeymasterContext {
      */
     virtual KeymasterEnforcement* enforcement_policy() = 0;
 
-    virtual keymaster_error_t GenerateAttestation(const Key& key,
-                                                  const AuthorizationSet& attest_params,
-                                                  CertChainPtr* cert_chain) const = 0;
+    /**
+     * Generate an attestation certificate, with chain, using the factory attestation key.
+     */
+    virtual CertificateChain GenerateAttestation(const Key& key,
+                                                 const AuthorizationSet& attest_params,
+                                                 keymaster_error_t* error) const = 0;
+
+    /**
+     * Generate a self-signed certificate.  If fake_signature is true, a fake signature is installed
+     * in the certificate, rather than an actual self-signature.  The fake signature will not
+     * verify, of course.  In this case the certificate is primarily a way to convey the public key.
+     *
+     * Note that although the return type is CertificateChain, this is for convenience and
+     * consistency with GenerateAttestation, the chain never contains more than a single
+     * certificate.
+     */
+    virtual CertificateChain GenerateSelfSignedCertificate(const Key& key,
+                                                           const AuthorizationSet& cert_params,
+                                                           bool fake_signature,
+                                                           keymaster_error_t* error) const = 0;
 
     virtual keymaster_error_t
     UnwrapKey(const KeymasterKeyBlob& wrapped_key_blob, const KeymasterKeyBlob& wrapping_key_blob,

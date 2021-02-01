@@ -1,48 +1,45 @@
 /*
- **
- ** Copyright 2020, The Android Open Source Project
- **
- ** Licensed under the Apache License, Version 2.0 (the "License");
- ** you may not use this file except in compliance with the License.
- ** You may obtain a copy of the License at
- **
- **     http://www.apache.org/licenses/LICENSE-2.0
- **
- ** Unless required by applicable law or agreed to in writing, software
- ** distributed under the License is distributed on an "AS IS" BASIS,
- ** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- ** See the License for the specific language governing permissions and
- ** limitations under the License.
+ * Copyright 2020, The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
+#pragma once
 
 #include <log/log.h>
 
-#include <aidl/android/hardware/keymint/Certificate.h>
-#include <aidl/android/hardware/keymint/HardwareAuthToken.h>
-#include <aidl/android/hardware/keymint/HardwareAuthenticatorType.h>
-#include <aidl/android/hardware/keymint/KeyFormat.h>
-#include <aidl/android/hardware/keymint/KeyParameter.h>
-#include <aidl/android/hardware/keymint/KeyPurpose.h>
-#include <aidl/android/hardware/keymint/SecurityLevel.h>
-#include <aidl/android/hardware/keymint/Tag.h>
+#include <aidl/android/hardware/security/keymint/Certificate.h>
+#include <aidl/android/hardware/security/keymint/HardwareAuthToken.h>
+#include <aidl/android/hardware/security/keymint/HardwareAuthenticatorType.h>
+#include <aidl/android/hardware/security/keymint/KeyFormat.h>
+#include <aidl/android/hardware/security/keymint/KeyParameter.h>
+#include <aidl/android/hardware/security/keymint/KeyPurpose.h>
+#include <aidl/android/hardware/security/keymint/SecurityLevel.h>
+#include <aidl/android/hardware/security/keymint/Tag.h>
 
 #include <keymaster/keymaster_enforcement.h>
 
-namespace aidl {
-namespace android {
-namespace hardware {
-namespace keymint {
+namespace aidl::android::hardware::security::keymint::km_utils {
 
-using ::aidl::android::hardware::keymint::HardwareAuthToken;
 using ::ndk::ScopedAStatus;
 using std::vector;
 
 inline keymaster_tag_t legacy_enum_conversion(const Tag value) {
-    return keymaster_tag_t(value);
+    return static_cast<keymaster_tag_t>(value);
 }
 
 inline Tag legacy_enum_conversion(const keymaster_tag_t value) {
-    return Tag(value);
+    return static_cast<Tag>(value);
 }
 
 inline keymaster_purpose_t legacy_enum_conversion(const KeyPurpose value) {
@@ -71,6 +68,8 @@ inline keymaster_tag_type_t typeFromTag(const keymaster_tag_t tag) {
     return keymaster_tag_get_type(tag);
 }
 
+KeyParameter kmParam2Aidl(const keymaster_key_param_t& param);
+vector<KeyParameter> kmParamSet2Aidl(const keymaster_key_param_set_t& set);
 keymaster_key_param_set_t aidlKeyParams2Km(const vector<KeyParameter>& keyParams);
 
 class KmParamSet : public keymaster_key_param_set_t {
@@ -84,7 +83,7 @@ class KmParamSet : public keymaster_key_param_set_t {
     }
 
     KmParamSet(const KmParamSet&) = delete;
-    ~KmParamSet() { delete[] params; }
+    ~KmParamSet() { keymaster_free_param_set(this); }
 };
 
 inline vector<uint8_t> kmBlob2vector(const keymaster_key_blob_t& blob) {
@@ -122,8 +121,6 @@ inline OutIter copy_bytes_to_iterator(const T& value, OutIter dest) {
 
 vector<uint8_t> authToken2AidlVec(const HardwareAuthToken& token);
 
-vector<KeyParameter> kmParamSet2Aidl(const keymaster_key_param_set_t& set);
-
 inline void addClientAndAppData(const vector<uint8_t>& clientId, const vector<uint8_t>& appData,
                                 ::keymaster::AuthorizationSet* params) {
     params->Clear();
@@ -135,7 +132,4 @@ inline void addClientAndAppData(const vector<uint8_t>& clientId, const vector<ui
     }
 }
 
-}  // namespace keymint
-}  // namespace hardware
-}  // namespace android
-}  // namespace aidl
+}  // namespace aidl::android::hardware::security::keymint::km_utils

@@ -16,13 +16,14 @@
 
 #include <fstream>
 
+#include <cppbor_parse.h>
 #include <gtest/gtest.h>
 
+#include <keymaster/attestation_record.h>
+#include <keymaster/contexts/soft_attestation_context.h>
 #include <keymaster/keymaster_context.h>
 
 #include "android_keymaster_test_utils.h"
-#include <cppbor_parse.h>
-#include <keymaster/attestation_record.h>
 
 // Use TAG_KDF as an 'unknown tag', as it is not deliberately thrown out
 // in attestation_record.cpp, but still among the keymaster tag types.
@@ -34,30 +35,27 @@ namespace test {
 
 TypedTag<KM_ULONG_REP, UNKNOWN_TAG> UNKNOWN_TAG_T;
 
-class TestContext : public AttestationRecordContext {
+class TestContext : public SoftAttestationContext {
   public:
-    TestContext(KmVersion version) : AttestationRecordContext(version) {}
+    TestContext(KmVersion version) : SoftAttestationContext(version) {}
 
     keymaster_security_level_t GetSecurityLevel() const override {
         return KM_SECURITY_LEVEL_TRUSTED_ENVIRONMENT;
     }
-    keymaster_error_t GenerateUniqueId(uint64_t /* creation_date_time */,
-                                       const keymaster_blob_t& application_id,
-                                       bool /* reset_since_rotation */,
-                                       Buffer* unique_id) const override {
+    Buffer GenerateUniqueId(uint64_t /* creation_date_time */,
+                            const keymaster_blob_t& application_id, bool /* reset_since_rotation */,
+                            keymaster_error_t* error) const override {
         // Use the application ID directly as the unique ID.
-        unique_id->Reinitialize(application_id.data, application_id.data_length);
-        return KM_ERROR_OK;
+        *error = KM_ERROR_OK;
+        return {application_id.data, application_id.data_length};
     }
-    keymaster_error_t GetVerifiedBootParams(keymaster_blob_t* verified_boot_key,
-                                            keymaster_blob_t* /* verified_boot_hash */,
-                                            keymaster_verified_boot_t* verified_boot_state,
-                                            bool* device_locked) const override {
-        verified_boot_key->data = vboot_key_;
-        verified_boot_key->data_length = sizeof(vboot_key_);
-        *verified_boot_state = KM_VERIFIED_BOOT_VERIFIED;
-        *device_locked = true;
-        return KM_ERROR_OK;
+    const VerifiedBootParams* GetVerifiedBootParams(keymaster_error_t* error) const override {
+        static VerifiedBootParams params{};
+        params.verified_boot_key = {vboot_key_, sizeof(vboot_key_)};
+        params.verified_boot_state = KM_VERIFIED_BOOT_VERIFIED;
+        params.device_locked = true;
+        *error = KM_ERROR_OK;
+        return &params;
     }
 
     void VerifyRootOfTrust(const keymaster_blob_t& verified_boot_key,
@@ -111,8 +109,7 @@ TEST(AttestAsn1Test, Simple) {
 
     std::ofstream output("attest.der",
                          std::ofstream::out | std::ofstream::binary | std::ofstream::trunc);
-    if (output)
-        output.write(reinterpret_cast<const char*>(asn1.get()), asn1_len);
+    if (output) output.write(reinterpret_cast<const char*>(asn1.get()), asn1_len);
     output.close();
 
     AuthorizationSet parsed_hw_set;
@@ -320,18 +317,18 @@ TEST(UnknownTagTest, Simple) {
     bool found_in_software_submod = false;
     bool found_in_hardware_submod = false;
     for (size_t i = 0; i < eat_map->size(); i++) {
-        auto [eat_key, eat_value] = (*eat_map)[i];
+        auto& [eat_key, eat_value] = (*eat_map)[i];
         const cppbor::Int* root_key = eat_key->asInt();
         if ((EatClaim)root_key->value() == EatClaim::SUBMODS) {
             const cppbor::Map* submods_map = eat_value->asMap();
             // Check for each submod whether it contains the expected value.
             for (size_t j = 0; j < submods_map->size(); j++) {
-                auto [submod_key, submod_value] = (*submods_map)[j];
+                auto& [submod_key, submod_value] = (*submods_map)[j];
                 const cppbor::Map* submod_map = submod_value->asMap();
                 bool found_in_submod = false;
                 EatSecurityLevel submod_security_level;
                 for (size_t k = 0; k < submod_map->size(); k++) {
-                    auto [key_item, value_item] = (*submod_map)[k];
+                    auto& [key_item, value_item] = (*submod_map)[k];
                     const cppbor::Int* key_int = key_item->asInt();
                     if (key_int->value() == convert_to_eat_claim(UNKNOWN_TAG_T)) {
                         found_in_submod = true;

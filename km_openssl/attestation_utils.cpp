@@ -15,155 +15,40 @@
 ** limitations under the License.
 */
 
-#include <keymaster/km_openssl/attestation_utils.h>
-#include <keymaster/km_openssl/certificate_utils.h>
+#include <openssl/evp.h>
+#include <openssl/x509v3.h>
 
 #include <hardware/keymaster_defs.h>
 
-#include <keymaster/authorization_set.h>
 #include <keymaster/attestation_record.h>
+#include <keymaster/authorization_set.h>
 #include <keymaster/km_openssl/asymmetric_key.h>
-#include <keymaster/km_openssl/openssl_utils.h>
+#include <keymaster/km_openssl/attestation_utils.h>
+#include <keymaster/km_openssl/certificate_utils.h>
 #include <keymaster/km_openssl/openssl_err.h>
-
-#include <openssl/x509v3.h>
-#include <openssl/evp.h>
-
+#include <keymaster/km_openssl/openssl_utils.h>
 
 namespace keymaster {
 
 namespace {
 
-constexpr int kDefaultAttestationSerial = 1;
-constexpr const char kDefaultSubject[] = "Android Keystore Key";
+CertificateChain makeCertChain(X509* certificate, CertificateChain chain,
+                               keymaster_error_t* error) {
+    keymaster_blob_t blob{};
+    *error = encode_certificate(certificate, &blob);
+    if (*error != KM_ERROR_OK) return {};
 
-struct emptyCert {};
-
-__attribute__((__unused__))
-inline keymaster_blob_t certBlobifier(const emptyCert&, bool*){ return {}; }
-template <size_t N>
-inline keymaster_blob_t certBlobifier(const uint8_t (&cert)[N], bool* fail){
-    keymaster_blob_t result = { dup_array(cert), N };
-    if (!result.data) {
-        *fail = true;
+    if (!chain.push_front(move(blob))) {
+        *error = KM_ERROR_MEMORY_ALLOCATION_FAILED;
         return {};
     }
-    return result;
-}
-inline keymaster_blob_t certBlobifier(const keymaster_blob_t& blob, bool* fail){
-    if (blob.data == nullptr || blob.data_length == 0) return {};
-    keymaster_blob_t result = { dup_array(blob.data, blob.data_length), blob.data_length };
-    if (!result.data) {
-        *fail = true;
-        return {};
-    }
-    return result;
-}
-inline keymaster_blob_t certBlobifier(keymaster_blob_t&& blob, bool*){
-    if (blob.data == nullptr || blob.data_length == 0) return {};
-    keymaster_blob_t result = blob;
-    blob = {};
-    return result;
-}
-inline keymaster_blob_t certBlobifier(X509* certificate, bool* fail){
-    int len = i2d_X509(certificate, nullptr);
-    if (len < 0) {
-        *fail = true;
-        return {};
-    }
-
-    uint8_t* data = new(std::nothrow) uint8_t[len];
-    if (!data) {
-        *fail = true;
-        return {};
-    }
-    uint8_t* p = data;
-
-    i2d_X509(certificate, &p);
-
-    return { data, (size_t)len };
-}
-
-inline bool certCopier(keymaster_blob_t** out, const keymaster_cert_chain_t& chain,
-                              bool* fail) {
-    for (size_t i = 0; i < chain.entry_count; ++i) {
-        *(*out)++ = certBlobifier(chain.entries[i], fail);
-    }
-    return *fail;
-}
-
-__attribute__((__unused__))
-inline bool certCopier(keymaster_blob_t** out, keymaster_cert_chain_t&& chain, bool* fail) {
-    for (size_t i = 0; i < chain.entry_count; ++i) {
-        *(*out)++ = certBlobifier(move(chain.entries[i]), fail);
-    }
-    delete[] chain.entries;
-    chain.entries = nullptr;
-    chain.entry_count = 0;
-    return *fail;
-}
-template <typename CERT>
-inline bool certCopier(keymaster_blob_t** out, CERT&& cert, bool* fail) {
-    *(*out)++ = certBlobifier(forward<CERT>(cert), fail);
-    return *fail;
-}
-
-inline bool certCopyHelper(keymaster_blob_t**, bool* fail) {
-    return *fail;
-}
-
-template <typename CERT, typename... CERTS>
-inline bool certCopyHelper(keymaster_blob_t** out, bool* fail, CERT&& cert, CERTS&&... certs) {
-    certCopier(out, forward<CERT>(cert), fail);
-    return certCopyHelper(out, fail, forward<CERTS>(certs)...);
-}
-
-
-
-template <typename T>
-inline size_t noOfCert(T &&) { return 1; }
-inline size_t noOfCert(const keymaster_cert_chain_t& cert_chain) { return cert_chain.entry_count; }
-
-inline size_t certCount() { return 0; }
-template <typename CERT, typename... CERTS>
-inline size_t certCount(CERT&& cert, CERTS&&... certs) {
-    return noOfCert(forward<CERT>(cert)) + certCount(forward<CERTS>(certs)...);
-}
-
-/*
- * makeCertChain creates a new keymaster_cert_chain_t from all the certs that get thrown at it
- * in the given order. A cert may be a X509*, uint8_t[], a keymaster_blob_t, an instance of
- * emptyCert, or another keymater_cert_chain_t in which case the certs of the chain are included
- * in the new chain. emptyCert is a placeholder which results in an empty slot at the given
- * position in the newly created certificate chain. E.g., makeCertChain(emptyCert(), someCertChain)
- * allocates enough slots to accommodate all certificates of someCertChain plus one empty slot and
- * copies in someCertChain starting at index 1 so that the slot with index 0 can be used for a new
- * leaf entry.
- *
- * makeCertChain respects move semantics. E.g., makeCertChain(emptyCert(), std::move(someCertChain))
- * will take possession of secondary resources for the certificate blobs so that someCertChain is
- * empty after the call. Also, because no allocation happens this cannot fail. Note, however, that
- * if another cert is passed to makeCertChain, that needs to be copied and thus requires
- * allocation, and this allocation fails, all resources - allocated or moved - will be reaped.
- */
-template <typename... CERTS>
-CertChainPtr makeCertChain(CERTS&&... certs) {
-    CertChainPtr result(new (std::nothrow) keymaster_cert_chain_t);
-    if (!result.get()) return {};
-    result->entries = new (std::nothrow) keymaster_blob_t[certCount(forward<CERTS>(certs)...)];
-    if (!result->entries) return {};
-    result->entry_count = certCount(forward<CERTS>(certs)...);
-    bool allocation_failed = false;
-    keymaster_blob_t* entries = result->entries;
-    certCopyHelper(&entries, &allocation_failed, forward<CERTS>(certs)...);
-    if (allocation_failed) return {};
-    return result;
+    return chain;
 }
 
 keymaster_error_t build_attestation_extension(const AuthorizationSet& attest_params,
                                               const AuthorizationSet& tee_enforced,
                                               const AuthorizationSet& sw_enforced,
-                                              const AttestationRecordContext& context,
+                                              const AttestationContext& context,
                                               X509_EXTENSION_Ptr* extension) {
     ASN1_OBJECT_Ptr oid(
         OBJ_txt2obj(kAsn1TokenOid, 1 /* accept numerical dotted string form only */));
@@ -193,7 +78,7 @@ keymaster_error_t build_attestation_extension(const AuthorizationSet& attest_par
 keymaster_error_t build_eat_extension(const AuthorizationSet& attest_params,
                                       const AuthorizationSet& tee_enforced,
                                       const AuthorizationSet& sw_enforced,
-                                      const AttestationRecordContext& context,
+                                      const AttestationContext& context,  //
                                       X509_EXTENSION_Ptr* extension) {
     ASN1_OBJECT_Ptr oid(
         OBJ_txt2obj(kEatTokenOid, 1 /* accept numerical dotted string form only */));
@@ -224,10 +109,10 @@ keymaster_error_t build_eat_extension(const AuthorizationSet& attest_params,
 keymaster_error_t add_attestation_extension(const AuthorizationSet& attest_params,
                                             const AuthorizationSet& tee_enforced,
                                             const AuthorizationSet& sw_enforced,
-                                            const AttestationRecordContext& context,
+                                            const AttestationContext& context,  //
                                             X509* certificate) {
     X509_EXTENSION_Ptr attest_extension;
-    if (context.GetKmVersion() < KmVersion::KEYMINT_1) {
+    if (context.GetKmVersion() <= KmVersion::KEYMINT_1) {
         if (auto error = build_attestation_extension(attest_params, tee_enforced, sw_enforced,
                                                      context, &attest_extension)) {
             return error;
@@ -249,19 +134,16 @@ keymaster_error_t add_attestation_extension(const AuthorizationSet& attest_param
 
 }  // anonymous namespace
 
-keymaster_error_t
-make_attestation_cert(const EVP_PKEY* evp_pkey, const uint32_t serial, const X509_NAME* subject,
-                      const X509_NAME* issuer, const uint64_t activeDateTimeMilliSeconds,
-                      const uint64_t usageExpireDateTimeMilliSeconds, const bool is_signing_key,
-                      const bool is_encryption_key, const AuthorizationSet& attest_params,
-                      const AuthorizationSet& tee_enforced, const AuthorizationSet& sw_enforced,
-                      const AttestationRecordContext& context, X509_Ptr* cert_out) {
+keymaster_error_t make_attestation_cert(
+    const EVP_PKEY* evp_pkey, const X509_NAME* issuer, const CertificateCallerParams& cert_params,
+    const bool is_signing_key, const bool is_encryption_key, const bool is_key_agreement_key,
+    const AuthorizationSet& attest_params, const AuthorizationSet& tee_enforced,
+    const AuthorizationSet& sw_enforced, const AttestationContext& context, X509_Ptr* cert_out) {
 
     // First make the basic certificate with usage extension.
     X509_Ptr certificate;
-    if (auto error = make_cert(evp_pkey, serial, subject, issuer, activeDateTimeMilliSeconds,
-                               usageExpireDateTimeMilliSeconds, is_signing_key, is_encryption_key,
-                               &certificate)) {
+    if (auto error = make_cert(evp_pkey, issuer, cert_params, is_signing_key, is_encryption_key,
+                               is_key_agreement_key, &certificate)) {
         return error;
     }
 
@@ -275,84 +157,50 @@ make_attestation_cert(const EVP_PKEY* evp_pkey, const uint32_t serial, const X50
     return KM_ERROR_OK;
 }
 
-// Generate attestation certificate base on the EVP key and other parameters
-// passed in.  Note that due to sub sub sub function call setup, there are 3 AuthorizationSet
-// passed in, hardware, software, and attest_params.  In attest_params, we expects the
-// challenge, active time and expiration time, and app id.  In hw_enforced, we expects
-// hardware related tags such as TAG_IDENTITY_CREDENTIAL_KEY.
-//
-// The active time and expiration time are expected in milliseconds.
-keymaster_error_t generate_attestation_from_EVP(const EVP_PKEY* evp_key,  //
-                                                const AuthorizationSet& sw_enforced,
-                                                const AuthorizationSet& tee_enforced,
-                                                const AuthorizationSet& attest_params,
-                                                const AttestationRecordContext& context,
-                                                const keymaster_cert_chain_t& attestation_chain,
-                                                const keymaster_key_blob_t& attestation_signing_key,
-                                                CertChainPtr* cert_chain) {
-
-    uint32_t serial = kDefaultAttestationSerial;
-    attest_params.GetTagValue(TAG_CERTIFICATE_SERIAL, &serial);
-
-    keymaster_blob_t att_subject = {nullptr, 0};
-    X509_NAME_Ptr subjectName;
-
-    if (attest_params.GetTagValue(TAG_CERTIFICATE_SUBJECT, &att_subject) &&
-        att_subject.data_length > 0) {
-        if (auto error =
-                make_name_from_der(att_subject.data, att_subject.data_length, &subjectName)) {
-            return error;
-        }
-    } else {
-        if (auto error = make_name_from_str(kDefaultSubject, &subjectName)) {
-            return error;
-        }
-    }
+// Generate attestation certificate base on the EVP key and other parameters passed in.
+CertificateChain generate_attestation_from_EVP(const EVP_PKEY* evp_key,  //
+                                               const AuthorizationSet& sw_enforced,
+                                               const AuthorizationSet& tee_enforced,
+                                               const AuthorizationSet& attest_params,
+                                               const AttestationContext& context,
+                                               CertificateChain attestation_chain,
+                                               const keymaster_key_blob_t& attestation_signing_key,
+                                               keymaster_error_t* error) {
+    keymaster_error_t err;
+    if (!error) error = &err;
 
     const uint8_t* p = attestation_chain.entries[0].data;
     X509_Ptr signing_cert(d2i_X509(nullptr, &p, attestation_chain.entries[0].data_length));
     if (!signing_cert.get()) {
-        return TranslateLastOpenSslError();
+        *error = TranslateLastOpenSslError();
+        return {};
     }
 
     X509_NAME* issuerSubject = X509_get_subject_name(signing_cert.get());
     if (!issuerSubject) {
-        return KM_ERROR_UNKNOWN_ERROR;
+        *error = TranslateLastOpenSslError();
+        return {};
     }
 
-    uint64_t activeDateTime = 0;
-    attest_params.GetTagValue(TAG_ACTIVE_DATETIME, &activeDateTime);
+    AuthProxy proxy(tee_enforced, sw_enforced);
+    bool is_signing_key = proxy.Contains(TAG_PURPOSE, KM_PURPOSE_SIGN);
+    bool is_encryption_key = proxy.Contains(TAG_PURPOSE, KM_PURPOSE_DECRYPT);
+    bool is_key_agreement_key = proxy.Contains(TAG_PURPOSE, KM_PURPOSE_AGREE_KEY);
 
-    uint64_t usageExpireDateTime = UINT64_MAX;
-    attest_params.GetTagValue(TAG_USAGE_EXPIRE_DATETIME, &usageExpireDateTime);
-
-    bool is_signing_key = tee_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_SIGN) ||
-                          tee_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_VERIFY) ||
-                          sw_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_SIGN) ||
-                          sw_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_VERIFY);
-
-    bool is_encryption_key = tee_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_ENCRYPT) ||
-                             tee_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_DECRYPT) ||
-                             sw_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_ENCRYPT) ||
-                             sw_enforced.Contains(TAG_PURPOSE, KM_PURPOSE_DECRYPT);
+    CertificateCallerParams cert_params{};
+    *error = get_certificate_params(attest_params, &cert_params);
+    if (*error != KM_ERROR_OK) return {};
 
     X509_Ptr certificate;
-    if (auto error = make_attestation_cert(evp_key, serial, subjectName.get(), issuerSubject,
-                                           activeDateTime, usageExpireDateTime, is_signing_key,
-                                           is_encryption_key, attest_params, tee_enforced,
-                                           sw_enforced, context, &certificate)) {
-        return error;
-    }
+    *error = make_attestation_cert(evp_key, issuerSubject, cert_params, is_signing_key,
+                                   is_encryption_key, is_key_agreement_key, attest_params,
+                                   tee_enforced, sw_enforced, context, &certificate);
+    if (*error != KM_ERROR_OK) return {};
 
-    if (auto error = sign_cert(certificate.get(), signing_cert.get(), attestation_signing_key)) {
-        return error;
-    }
+    *error = sign_cert(certificate.get(), attestation_signing_key);
+    if (*error != KM_ERROR_OK) return {};
 
-    *cert_chain = makeCertChain(certificate.get(), attestation_chain);
-    if (!*cert_chain) {
-        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
-    }
-    return KM_ERROR_OK;
+    return makeCertChain(certificate.get(), move(attestation_chain), error);
 }
 
 // Generate attestation certificate base on the AsymmetricKey key and other parameters
@@ -364,23 +212,20 @@ keymaster_error_t generate_attestation_from_EVP(const EVP_PKEY* evp_key,  //
 // Hardware and software enforced AuthorizationSet are expected to be built into the AsymmetricKey
 // input. In hardware enforced AuthorizationSet, we expect hardware related tags such as
 // TAG_IDENTITY_CREDENTIAL_KEY.
-keymaster_error_t generate_attestation(const AsymmetricKey& key,
-                                       const AuthorizationSet& attest_params,
-                                       const keymaster_cert_chain_t& attestation_chain,
-                                       const keymaster_key_blob_t& attestation_signing_key,
-                                       const AttestationRecordContext& context,
-                                       CertChainPtr* cert_chain_out) {
-
-    // assume the conversion to EVP key correctly encodes the key type such
-    // that EVP_PKEY_type(evp_key->type) returns correctly.
+CertificateChain generate_attestation(const AsymmetricKey& key,
+                                      const AuthorizationSet& attest_params,
+                                      CertificateChain attestation_chain,
+                                      const keymaster_key_blob_t& attestation_signing_key,
+                                      const AttestationContext& context, keymaster_error_t* error) {
     EVP_PKEY_Ptr pkey(EVP_PKEY_new());
     if (!key.InternalToEvp(pkey.get())) {
-        return TranslateLastOpenSslError();
+        *error = TranslateLastOpenSslError();
+        return {};
     }
 
     return generate_attestation_from_EVP(pkey.get(), key.sw_enforced(), key.hw_enforced(),
-                                         attest_params, context, attestation_chain,
-                                         attestation_signing_key, cert_chain_out);
+                                         attest_params, context, move(attestation_chain),
+                                         attestation_signing_key, error);
 }
 
 }  // namespace keymaster

@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef SYSTEM_KEYMASTER_OPENSSL_UTILS_H_
-#define SYSTEM_KEYMASTER_OPENSSL_UTILS_H_
+#pragma once
 
 #include <openssl/bn.h>
 #include <openssl/ec.h>
@@ -30,7 +29,7 @@
 
 namespace keymaster {
 
-template<typename BlobType> struct TKeymasterBlob;
+template <typename BlobType> struct TKeymasterBlob;
 typedef TKeymasterBlob<keymaster_key_blob_t> KeymasterKeyBlob;
 
 class EvpMdCtxCleaner {
@@ -62,6 +61,7 @@ DEFINE_OPENSSL_OBJECT_POINTER(EC_KEY)
 DEFINE_OPENSSL_OBJECT_POINTER(EC_POINT)
 DEFINE_OPENSSL_OBJECT_POINTER(ENGINE)
 DEFINE_OPENSSL_OBJECT_POINTER(EVP_PKEY)
+DEFINE_OPENSSL_OBJECT_POINTER(EVP_PKEY_CTX)
 DEFINE_OPENSSL_OBJECT_POINTER(PKCS8_PRIV_KEY_INFO)
 DEFINE_OPENSSL_OBJECT_POINTER(RSA)
 DEFINE_OPENSSL_OBJECT_POINTER(X509)
@@ -99,6 +99,23 @@ size_t ec_group_size_bits(EC_KEY* ec_key);
 
 keymaster_error_t GenerateRandom(uint8_t* buf, size_t length);
 
-}  // namespace keymaster
+inline const EVP_MD* KmDigestToEvpDigest(keymaster_digest_t digest) {
+    switch (digest) {
+    case KM_DIGEST_MD5:
+        return EVP_md5();
+    case KM_DIGEST_SHA1:
+        return EVP_sha1();
+    case KM_DIGEST_SHA_2_224:
+        return EVP_sha224();
+    case KM_DIGEST_SHA_2_256:
+        return EVP_sha256();
+    case KM_DIGEST_SHA_2_384:
+        return EVP_sha384();
+    case KM_DIGEST_SHA_2_512:
+        return EVP_sha512();
+    default:
+        return nullptr;
+    }
+}
 
-#endif  // SYSTEM_KEYMASTER_OPENSSL_UTILS_H_
+}  // namespace keymaster

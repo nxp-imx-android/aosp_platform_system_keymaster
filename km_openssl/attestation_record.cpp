@@ -17,16 +17,17 @@
 #include <keymaster/attestation_record.h>
 
 #include <assert.h>
+#include <math.h>
+
+#include <unordered_map>
 
 #include <cppbor_parse.h>
 #include <openssl/asn1t.h>
 
 #include <keymaster/android_keymaster_utils.h>
+#include <keymaster/attestation_context.h>
 #include <keymaster/km_openssl/openssl_err.h>
 #include <keymaster/km_openssl/openssl_utils.h>
-
-#include <math.h>
-#include <unordered_map>
 
 #define ASSERT_OR_RETURN_ERROR(stmt, error)                                                        \
     do {                                                                                           \
@@ -45,14 +46,9 @@ IMPLEMENT_ASN1_FUNCTIONS(KM_AUTH_LIST);
 IMPLEMENT_ASN1_FUNCTIONS(KM_KEY_DESCRIPTION);
 
 static const keymaster_tag_t kDeviceAttestationTags[] = {
-    KM_TAG_ATTESTATION_ID_BRAND,
-    KM_TAG_ATTESTATION_ID_DEVICE,
-    KM_TAG_ATTESTATION_ID_PRODUCT,
-    KM_TAG_ATTESTATION_ID_SERIAL,
-    KM_TAG_ATTESTATION_ID_IMEI,
-    KM_TAG_ATTESTATION_ID_MEID,
-    KM_TAG_ATTESTATION_ID_MANUFACTURER,
-    KM_TAG_ATTESTATION_ID_MODEL,
+    KM_TAG_ATTESTATION_ID_BRAND,        KM_TAG_ATTESTATION_ID_DEVICE, KM_TAG_ATTESTATION_ID_PRODUCT,
+    KM_TAG_ATTESTATION_ID_SERIAL,       KM_TAG_ATTESTATION_ID_IMEI,   KM_TAG_ATTESTATION_ID_MEID,
+    KM_TAG_ATTESTATION_ID_MANUFACTURER, KM_TAG_ATTESTATION_ID_MODEL,
 };
 
 struct KM_AUTH_LIST_Delete {
@@ -188,7 +184,8 @@ insert_unknown_tag(const keymaster_key_param_t& param, cppbor::Map* dest_map,
  * https://tools.ietf.org/html/draft-ietf-rats-eat.
  * The resulting format is a bstr encoded as follows:
  * - Type byte: 0x03
- * - IMEI (without check digit), encoded as a 48-bit binary integer
+ * - IMEI (without check digit), encoded as byte string of length 14 with each byte as the digit's
+ *   value. The IMEI value encoded SHALL NOT include Luhn checksum or SVN information.
  */
 keymaster_error_t imei_to_ueid(const keymaster_blob_t& imei_blob, cppbor::Bstr* out) {
     ASSERT_OR_RETURN_ERROR(imei_blob.data_length == kImeiBlobLength, KM_ERROR_INVALID_TAG);
@@ -197,13 +194,9 @@ keymaster_error_t imei_to_ueid(const keymaster_blob_t& imei_blob, cppbor::Bstr* 
     ueid[0] = kImeiTypeByte;
     // imei_blob corresponds to android.telephony.TelephonyManager#getDeviceId(), which is the
     // 15-digit IMEI (including the check digit), encoded as a string.
-    std::string imei_string(reinterpret_cast<const char*>(imei_blob.data),
-                            kImeiBlobLength -
-                                1);  // Intentionally skip check digit at last position.
-    uint64_t imei_long = std::strtoull(imei_string.c_str(), nullptr, 10);
-    for (int i = 0; i < 6; i++) {
-        // TODO: https://tools.ietf.org/html/draft-ietf-rats-eat does not seem to specify endianness
-        ueid[i + 1] = (imei_long >> (sizeof(uint64_t) * (5 - i))) & 0xff;
+    for (size_t i = 1; i < kUeidLength; i++) {
+        // Convert each character to its numeric value.
+        ueid[i] = imei_blob.data[i - 1] - '0';  // Intentionally skip check digit at last position.
     }
 
     *out = cppbor::Bstr(std::pair(ueid, sizeof(ueid)));
@@ -216,20 +209,14 @@ keymaster_error_t ueid_to_imei_blob(const cppbor::Bstr* ueid, keymaster_blob_t* 
     ASSERT_OR_RETURN_ERROR(ueid_vec.size() == kUeidLength, KM_ERROR_INVALID_TAG);
     ASSERT_OR_RETURN_ERROR(ueid_vec[0] == kImeiTypeByte, KM_ERROR_INVALID_TAG);
 
-    uint64_t imei_long = 0;
-    for (int i = 0; i < 6; i++) {
-        imei_long += ((uint64_t)ueid_vec[i + 1]) << (sizeof(uint64_t) * (5 - i));
-    }
-
     uint8_t* imei_string = (uint8_t*)calloc(kImeiBlobLength, sizeof(uint8_t));
     // Fill string from left to right, and calculate Luhn check digit.
     int luhn_digit_sum = 0;
-    for (unsigned int i = 0; i < kImeiBlobLength - 1; i++) {
-        uint64_t magnitude = pow(10L, (13L - i));
-        int digit_i = (int)(imei_long / magnitude);
+    for (size_t i = 0; i < kImeiBlobLength - 1; i++) {
+        uint8_t digit_i = ueid_vec[i + 1];
+        // Convert digit to its string value.
         imei_string[i] = '0' + digit_i;
         luhn_digit_sum += i % 2 == 0 ? digit_i : digit_i * 2 / 10 + (digit_i * 2) % 10;
-        imei_long %= magnitude;
     }
     imei_string[kImeiBlobLength - 1] = '0' + (10 - luhn_digit_sum % 10) % 10;
 
@@ -268,16 +255,17 @@ bool is_valid_attestation_challenge(const keymaster_blob_t& attestation_challeng
     return (attestation_challenge.data_length <= kMaximumAttestationChallengeLength);
 }
 
-keymaster_error_t generate_unique_id(const AttestationRecordContext& context,
-                                     const AuthorizationSet& sw_enforced,
-                                     const AuthorizationSet& attestation_params,
-                                     Buffer* unique_id) {
+Buffer generate_unique_id(const AttestationContext& context,  //
+                          const AuthorizationSet& sw_enforced,
+                          const AuthorizationSet& attestation_params,  //
+                          keymaster_error_t* error) {
     uint64_t creation_datetime;
     // Only check sw_enforced for TAG_CREATION_DATETIME, since it shouldn't be in tee_enforced,
     // since this implementation has no secure wall clock.
     if (!sw_enforced.GetTagValue(TAG_CREATION_DATETIME, &creation_datetime)) {
         LOG_E("Unique ID cannot be created without creation datetime", 0);
-        return KM_ERROR_INVALID_KEY_BLOB;
+        *error = KM_ERROR_INVALID_KEY_BLOB;
+        return {};
     }
 
     keymaster_blob_t application_id = {nullptr, 0};
@@ -285,7 +273,7 @@ keymaster_error_t generate_unique_id(const AttestationRecordContext& context,
 
     return context.GenerateUniqueId(creation_datetime, application_id,
                                     attestation_params.GetTagValue(TAG_RESET_SINCE_ID_ROTATION),
-                                    unique_id);
+                                    error);
 }
 
 // Put the contents of the keymaster AuthorizationSet auth_list into the EAT record structure.
@@ -598,6 +586,9 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
         case KM_TAG_BLOCK_MODE:
             integer_set = &record->block_mode;
             break;
+        case KM_TAG_RSA_OAEP_MGF_DIGEST:
+            integer_set = &record->mgf_digest;
+            break;
 
         /* Non-repeating unsigned integers */
         case KM_TAG_KEY_SIZE:
@@ -620,6 +611,9 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
             break;
         case KM_TAG_VENDOR_PATCHLEVEL:
             integer_ptr = &record->vendor_patchlevel;
+            break;
+        case KM_TAG_USAGE_COUNT_LIMIT:
+            integer_ptr = &record->usage_count_limit;
             break;
 
         /* Non-repeating long unsigned integers */
@@ -771,10 +765,8 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
 
         case KM_BOOL:
             ASSERT_OR_RETURN_ERROR(bool_ptr, KM_ERROR_INVALID_TAG);
-            if (!*bool_ptr)
-                *bool_ptr = ASN1_NULL_new();
-            if (!*bool_ptr)
-                return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+            if (!*bool_ptr) *bool_ptr = ASN1_NULL_new();
+            if (!*bool_ptr) return KM_ERROR_MEMORY_ALLOCATION_FAILED;
             break;
 
         /* Byte arrays*/
@@ -804,8 +796,7 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
         // This must be a keymaster1 key. It's an EC key with no curve.  Insert the curve.
 
         keymaster_error_t error = EcKeySizeToCurve(key_size, &ec_curve);
-        if (error != KM_ERROR_OK)
-            return error;
+        if (error != KM_ERROR_OK) return error;
 
         UniquePtr<ASN1_INTEGER, ASN1_INTEGER_Delete> value(ASN1_INTEGER_new());
         if (!value.get()) {
@@ -826,7 +817,7 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
 // and tee_enforced.
 keymaster_error_t build_eat_record(const AuthorizationSet& attestation_params,
                                    AuthorizationSet sw_enforced, AuthorizationSet tee_enforced,
-                                   const AttestationRecordContext& context,
+                                   const AttestationContext& context,
                                    std::vector<uint8_t>* eat_token) {
     ASSERT_OR_RETURN_ERROR(eat_token, KM_ERROR_UNEXPECTED_NULL_POINTER);
 
@@ -846,26 +837,22 @@ keymaster_error_t build_eat_record(const AuthorizationSet& attestation_params,
         return KM_ERROR_UNKNOWN_ERROR;
     }
 
-    keymaster_blob_t verified_boot_key;
-    keymaster_blob_t verified_boot_hash;
-    keymaster_verified_boot_t verified_boot_state;
-    bool device_locked;
-    keymaster_error_t error = context.GetVerifiedBootParams(&verified_boot_key, &verified_boot_hash,
-                                                            &verified_boot_state, &device_locked);
+    keymaster_error_t error;
+    const AttestationContext::VerifiedBootParams* vb_params = context.GetVerifiedBootParams(&error);
     if (error != KM_ERROR_OK) return error;
 
-    if (verified_boot_key.data_length) {
-        eat_record.add(EatClaim::VERIFIED_BOOT_KEY, blob_to_bstr(verified_boot_key));
+    if (vb_params->verified_boot_key.data_length) {
+        eat_record.add(EatClaim::VERIFIED_BOOT_KEY, blob_to_bstr(vb_params->verified_boot_key));
     }
-    if (verified_boot_hash.data_length) {
-        eat_record.add(EatClaim::VERIFIED_BOOT_HASH, blob_to_bstr(verified_boot_hash));
+    if (vb_params->verified_boot_hash.data_length) {
+        eat_record.add(EatClaim::VERIFIED_BOOT_HASH, blob_to_bstr(vb_params->verified_boot_hash));
     }
-    if (device_locked) {
-        eat_record.add(EatClaim::DEVICE_LOCKED, device_locked);
+    if (vb_params->device_locked) {
+        eat_record.add(EatClaim::DEVICE_LOCKED, vb_params->device_locked);
     }
 
-    bool verified_or_self_signed = (verified_boot_state == KM_VERIFIED_BOOT_VERIFIED ||
-                                    verified_boot_state == KM_VERIFIED_BOOT_SELF_SIGNED);
+    bool verified_or_self_signed = (vb_params->verified_boot_state == KM_VERIFIED_BOOT_VERIFIED ||
+                                    vb_params->verified_boot_state == KM_VERIFIED_BOOT_SELF_SIGNED);
     auto eat_boot_state = cppbor::Array()
                               .add(verified_or_self_signed)  // secure-boot-enabled
                               .add(verified_or_self_signed)  // debug-disabled
@@ -873,11 +860,13 @@ keymaster_error_t build_eat_record(const AuthorizationSet& attestation_params,
                               .add(verified_or_self_signed)  // debug-permanent-disable
                               .add(false);  // debug-full-permanent-disable (no way to verify)
     eat_record.add(EatClaim::BOOT_STATE, std::move(eat_boot_state));
-    eat_record.add(EatClaim::OFFICIAL_BUILD, verified_boot_state == KM_VERIFIED_BOOT_VERIFIED);
+    eat_record.add(EatClaim::OFFICIAL_BUILD,
+                   vb_params->verified_boot_state == KM_VERIFIED_BOOT_VERIFIED);
 
     eat_record.add(EatClaim::ATTESTATION_VERSION,
                    version_to_attestation_version(context.GetKmVersion()));
-    eat_record.add(EatClaim::KEYMASTER_VERSION, context.GetKmVersion());
+    eat_record.add(EatClaim::KEYMASTER_VERSION,
+                   version_to_attestation_km_version(context.GetKmVersion()));
 
     keymaster_blob_t attestation_challenge = {nullptr, 0};
     if (!attestation_params.GetTagValue(TAG_ATTESTATION_CHALLENGE, &attestation_challenge)) {
@@ -956,10 +945,9 @@ keymaster_error_t build_eat_record(const AuthorizationSet& attestation_params,
         keymaster_blob_t application_id = {nullptr, 0};
         sw_enforced.GetTagValue(TAG_APPLICATION_ID, &application_id);
 
-        Buffer unique_id;
-        context.GenerateUniqueId(creation_datetime, application_id,
-                                 attestation_params.GetTagValue(TAG_RESET_SINCE_ID_ROTATION),
-                                 &unique_id);
+        Buffer unique_id = context.GenerateUniqueId(
+            creation_datetime, application_id,
+            attestation_params.GetTagValue(TAG_RESET_SINCE_ID_ROTATION), &error);
         if (error != KM_ERROR_OK) return error;
 
         eat_record.add(EatClaim::CTI,
@@ -973,10 +961,12 @@ keymaster_error_t build_eat_record(const AuthorizationSet& attestation_params,
 
 // Construct an ASN1.1 DER-encoded attestation record containing the values from sw_enforced and
 // tee_enforced.
-keymaster_error_t
-build_attestation_record(const AuthorizationSet& attestation_params, AuthorizationSet sw_enforced,
-                         AuthorizationSet tee_enforced, const AttestationRecordContext& context,
-                         UniquePtr<uint8_t[]>* asn1_key_desc, size_t* asn1_key_desc_len) {
+keymaster_error_t build_attestation_record(const AuthorizationSet& attestation_params,  //
+                                           AuthorizationSet sw_enforced,
+                                           AuthorizationSet tee_enforced,
+                                           const AttestationContext& context,
+                                           UniquePtr<uint8_t[]>* asn1_key_desc,
+                                           size_t* asn1_key_desc_len) {
     ASSERT_OR_RETURN_ERROR(asn1_key_desc && asn1_key_desc_len, KM_ERROR_UNEXPECTED_NULL_POINTER);
 
     UniquePtr<KM_KEY_DESCRIPTION, KM_KEY_DESCRIPTION_Delete> key_desc(KM_KEY_DESCRIPTION_new());
@@ -991,26 +981,23 @@ build_attestation_record(const AuthorizationSet& attestation_params, Authorizati
         root_of_trust = key_desc->tee_enforced->root_of_trust;
     }
 
-    keymaster_blob_t verified_boot_key;
-    keymaster_blob_t verified_boot_hash;
-    keymaster_verified_boot_t verified_boot_state;
-    bool device_locked;
-    keymaster_error_t error = context.GetVerifiedBootParams(&verified_boot_key, &verified_boot_hash,
-                                                            &verified_boot_state, &device_locked);
+    keymaster_error_t error;
+    auto vb_params = context.GetVerifiedBootParams(&error);
     if (error != KM_ERROR_OK) return error;
-    if (verified_boot_key.data_length &&
-        !ASN1_OCTET_STRING_set(root_of_trust->verified_boot_key, verified_boot_key.data,
-                               verified_boot_key.data_length)) {
+    if (vb_params->verified_boot_key.data_length &&
+        !ASN1_OCTET_STRING_set(root_of_trust->verified_boot_key, vb_params->verified_boot_key.data,
+                               vb_params->verified_boot_key.data_length)) {
         return TranslateLastOpenSslError();
     }
-    if (verified_boot_hash.data_length &&
-        !ASN1_OCTET_STRING_set(root_of_trust->verified_boot_hash, verified_boot_hash.data,
-                               verified_boot_hash.data_length)) {
+    if (vb_params->verified_boot_hash.data_length &&
+        !ASN1_OCTET_STRING_set(root_of_trust->verified_boot_hash,
+                               vb_params->verified_boot_hash.data,
+                               vb_params->verified_boot_hash.data_length)) {
         return TranslateLastOpenSslError();
     }
 
-    root_of_trust->device_locked = device_locked ? 0xFF : 0x00;
-    if (!ASN1_ENUMERATED_set(root_of_trust->verified_boot_state, verified_boot_state)) {
+    root_of_trust->device_locked = vb_params->device_locked ? 0xFF : 0x00;
+    if (!ASN1_ENUMERATED_set(root_of_trust->verified_boot_state, vb_params->verified_boot_state)) {
         return TranslateLastOpenSslError();
     }
 
@@ -1064,12 +1051,10 @@ build_attestation_record(const AuthorizationSet& attestation_params, Authorizati
     };
 
     error = build_auth_list(sw_enforced, key_desc->software_enforced);
-    if (error != KM_ERROR_OK)
-        return error;
+    if (error != KM_ERROR_OK) return error;
 
     error = build_auth_list(tee_enforced, key_desc->tee_enforced);
-    if (error != KM_ERROR_OK)
-        return error;
+    if (error != KM_ERROR_OK) return error;
 
     // Only check tee_enforced for TAG_INCLUDE_UNIQUE_ID.  If we don't have hardware we can't
     // generate unique IDs.
@@ -1085,12 +1070,10 @@ build_attestation_record(const AuthorizationSet& attestation_params, Authorizati
         keymaster_blob_t application_id = {nullptr, 0};
         sw_enforced.GetTagValue(TAG_APPLICATION_ID, &application_id);
 
-        Buffer unique_id;
-        error = context.GenerateUniqueId(
+        Buffer unique_id = context.GenerateUniqueId(
             creation_datetime, application_id,
-            attestation_params.GetTagValue(TAG_RESET_SINCE_ID_ROTATION), &unique_id);
-        if (error != KM_ERROR_OK)
-            return error;
+            attestation_params.GetTagValue(TAG_RESET_SINCE_ID_ROTATION), &error);
+        if (error != KM_ERROR_OK) return error;
 
         key_desc->unique_id = ASN1_OCTET_STRING_new();
         if (!key_desc->unique_id ||
@@ -1100,15 +1083,13 @@ build_attestation_record(const AuthorizationSet& attestation_params, Authorizati
     }
 
     int len = i2d_KM_KEY_DESCRIPTION(key_desc.get(), nullptr);
-    if (len < 0)
-        return TranslateLastOpenSslError();
+    if (len < 0) return TranslateLastOpenSslError();
     *asn1_key_desc_len = len;
-    asn1_key_desc->reset(new(std::nothrow) uint8_t[*asn1_key_desc_len]);
+    asn1_key_desc->reset(new (std::nothrow) uint8_t[*asn1_key_desc_len]);
     if (!asn1_key_desc->get()) return KM_ERROR_MEMORY_ALLOCATION_FAILED;
     uint8_t* p = asn1_key_desc->get();
     len = i2d_KM_KEY_DESCRIPTION(key_desc.get(), &p);
-    if (len < 0)
-        return TranslateLastOpenSslError();
+    if (len < 0) return TranslateLastOpenSslError();
 
     return KM_ERROR_OK;
 }
@@ -1129,16 +1110,14 @@ static bool get_repeated_enums(const ASN1_INTEGER_SET* stack, keymaster_tag_t ta
 template <keymaster_tag_type_t Type, keymaster_tag_t Tag, typename KeymasterEnum>
 static bool get_enum(const ASN1_INTEGER* asn1_int, TypedEnumTag<Type, Tag, KeymasterEnum> tag,
                      AuthorizationSet* auth_list) {
-    if (!asn1_int)
-        return true;
+    if (!asn1_int) return true;
     return auth_list->push_back(tag, static_cast<KeymasterEnum>(ASN1_INTEGER_get(asn1_int)));
 }
 
 // Add the specified ulong tag/value pair to auth_list.
 static bool get_ulong(const ASN1_INTEGER* asn1_int, keymaster_tag_t tag,
                       AuthorizationSet* auth_list) {
-    if (!asn1_int)
-        return true;
+    if (!asn1_int) return true;
     UniquePtr<BIGNUM, BIGNUM_Delete> bn(ASN1_INTEGER_to_BN(asn1_int, nullptr));
     if (!bn.get()) return false;
     uint64_t ulong = 0;
@@ -1148,8 +1127,7 @@ static bool get_ulong(const ASN1_INTEGER* asn1_int, keymaster_tag_t tag,
 
 // Extract the values from the specified ASN.1 record and place them in auth_list.
 keymaster_error_t extract_auth_list(const KM_AUTH_LIST* record, AuthorizationSet* auth_list) {
-    if (!record)
-        return KM_ERROR_OK;
+    if (!record) return KM_ERROR_OK;
 
     // Purpose
     if (!get_repeated_enums(record->purpose, TAG_PURPOSE, auth_list)) {
@@ -1179,6 +1157,11 @@ keymaster_error_t extract_auth_list(const KM_AUTH_LIST* record, AuthorizationSet
 
     // Padding
     if (!get_repeated_enums(record->padding, TAG_PADDING, auth_list)) {
+        return KM_ERROR_MEMORY_ALLOCATION_FAILED;
+    }
+
+    // Rsa Oaep Mgf Digest
+    if (!get_repeated_enums(record->mgf_digest, TAG_RSA_OAEP_MGF_DIGEST, auth_list)) {
         return KM_ERROR_MEMORY_ALLOCATION_FAILED;
     }
 
@@ -1435,8 +1418,7 @@ keymaster_error_t parse_attestation_record(const uint8_t* asn1_key_desc, size_t 
     unique_id->data_length = record->unique_id->length;
 
     keymaster_error_t error = extract_auth_list(record->software_enforced, software_enforced);
-    if (error != KM_ERROR_OK)
-        return error;
+    if (error != KM_ERROR_OK) return error;
 
     return extract_auth_list(record->tee_enforced, tee_enforced);
 }
@@ -1487,7 +1469,7 @@ keymaster_error_t parse_eat_record(
     bool verified_or_self_signed = false;
 
     for (size_t i = 0; i < eat_map->size(); i++) {
-        auto [key_item, value_item] = (*eat_map)[i];
+        auto& [key_item, value_item] = (*eat_map)[i];
         const cppbor::Int* key = key_item->asInt();
         ASSERT_OR_RETURN_ERROR(key, (KM_ERROR_INVALID_TAG));
 
@@ -1537,7 +1519,7 @@ keymaster_error_t parse_eat_record(
         case EatClaim::SUBMODS:
             ASSERT_OR_RETURN_ERROR(map_value, KM_ERROR_INVALID_TAG);
             for (size_t j = 0; j < map_value->size(); j++) {
-                auto [submod_key, submod_value] = (*map_value)[j];
+                auto& [submod_key, submod_value] = (*map_value)[j];
                 const cppbor::Map* submod_map = submod_value->asMap();
                 ASSERT_OR_RETURN_ERROR(submod_map, KM_ERROR_INVALID_TAG);
                 error = parse_eat_submod(submod_map, software_enforced, tee_enforced);
@@ -1607,7 +1589,7 @@ keymaster_error_t parse_submod_values(AuthorizationSetBuilder* set_builder,
                                       int* auth_set_security_level, const cppbor::Map* submod_map) {
     ASSERT_OR_RETURN_ERROR(set_builder, KM_ERROR_UNEXPECTED_NULL_POINTER);
     for (size_t i = 0; i < submod_map->size(); i++) {
-        auto [key_item, value_item] = (*submod_map)[i];
+        auto& [key_item, value_item] = (*submod_map)[i];
         const cppbor::Int* key_int = key_item->asInt();
         ASSERT_OR_RETURN_ERROR(key_int, KM_ERROR_INVALID_TAG);
         int key = key_int->value();

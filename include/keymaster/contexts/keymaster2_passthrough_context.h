@@ -102,8 +102,15 @@ class Keymaster2PassthroughContext : public KeymasterContext {
      */
     KeymasterEnforcement* enforcement_policy() override;
 
-    keymaster_error_t GenerateAttestation(const Key& key, const AuthorizationSet& attest_params,
-                                          CertChainPtr* cert_chain) const override;
+    CertificateChain GenerateAttestation(const Key& key, const AuthorizationSet& attest_params,
+                                         keymaster_error_t* cert_chain) const override;
+    CertificateChain GenerateSelfSignedCertificate(const Key& /* key */,
+                                                   const AuthorizationSet& /* cert_params */,
+                                                   bool /* fake_signature */,
+                                                   keymaster_error_t* error) const override {
+        *error = KM_ERROR_UNIMPLEMENTED;
+        return {};
+    }
 
     keymaster_error_t
     UnwrapKey(const KeymasterKeyBlob& wrapped_key_blob, const KeymasterKeyBlob& wrapping_key_blob,

@@ -14,8 +14,7 @@
  * limitations under the License.
  */
 
-#ifndef SYSTEM_KEYMASTER_ATTESTATION_RECORD_H_
-#define SYSTEM_KEYMASTER_ATTESTATION_RECORD_H_
+#pragma once
 
 #include <hardware/keymaster_defs.h>
 
@@ -30,6 +29,8 @@
 #define remove_type_mask(tag) (tag & 0x0FFFFFFF)
 
 namespace keymaster {
+
+class AttestationContext;
 
 constexpr KmVersion kCurrentKmVersion = KmVersion::KEYMASTER_4_1;
 
@@ -76,6 +77,7 @@ typedef struct km_auth_list {
     ASN1_INTEGER_SET* block_mode;
     ASN1_INTEGER_SET* digest;
     ASN1_INTEGER_SET* padding;
+    ASN1_INTEGER_SET* mgf_digest;
     ASN1_NULL* caller_nonce;
     ASN1_INTEGER* min_mac_length;
     ASN1_INTEGER_SET* kdf;
@@ -116,6 +118,7 @@ typedef struct km_auth_list {
     ASN1_INTEGER* boot_patch_level;
     ASN1_INTEGER* vendor_patchlevel;
     ASN1_OCTET_STRING* confirmation_token;
+    ASN1_INTEGER* usage_count_limit;
 } KM_AUTH_LIST;
 
 ASN1_SEQUENCE(KM_AUTH_LIST) = {
@@ -125,6 +128,8 @@ ASN1_SEQUENCE(KM_AUTH_LIST) = {
     ASN1_EXP_SET_OF_OPT(KM_AUTH_LIST, block_mode, ASN1_INTEGER, TAG_BLOCK_MODE.masked_tag()),
     ASN1_EXP_SET_OF_OPT(KM_AUTH_LIST, digest, ASN1_INTEGER, TAG_DIGEST.masked_tag()),
     ASN1_EXP_SET_OF_OPT(KM_AUTH_LIST, padding, ASN1_INTEGER, TAG_PADDING.masked_tag()),
+    ASN1_EXP_SET_OF_OPT(KM_AUTH_LIST, mgf_digest, ASN1_INTEGER,
+                        TAG_RSA_OAEP_MGF_DIGEST.masked_tag()),
     ASN1_EXP_OPT(KM_AUTH_LIST, caller_nonce, ASN1_NULL, TAG_CALLER_NONCE.masked_tag()),
     ASN1_EXP_OPT(KM_AUTH_LIST, min_mac_length, ASN1_INTEGER, TAG_MIN_MAC_LENGTH.masked_tag()),
     ASN1_EXP_SET_OF_OPT(KM_AUTH_LIST, kdf, ASN1_INTEGER, TAG_KDF.masked_tag()),
@@ -186,6 +191,7 @@ ASN1_SEQUENCE(KM_AUTH_LIST) = {
     ASN1_EXP_OPT(KM_AUTH_LIST, vendor_patchlevel, ASN1_INTEGER, TAG_VENDOR_PATCHLEVEL.masked_tag()),
     ASN1_EXP_OPT(KM_AUTH_LIST, confirmation_token, ASN1_OCTET_STRING,
                  TAG_CONFIRMATION_TOKEN.masked_tag()),
+    ASN1_EXP_OPT(KM_AUTH_LIST, usage_count_limit, ASN1_INTEGER, TAG_USAGE_COUNT_LIMIT.masked_tag()),
 } ASN1_SEQUENCE_END(KM_AUTH_LIST);
 DECLARE_ASN1_FUNCTIONS(KM_AUTH_LIST);
 
@@ -303,65 +309,8 @@ static const char kEatSubmodNameSoftware[] = "software";
 static const char kEatSubmodNameTee[] = "tee";
 
 constexpr size_t kImeiBlobLength = 15;
-constexpr size_t kUeidLength = 7;
+constexpr size_t kUeidLength = 15;
 constexpr uint8_t kImeiTypeByte = 0x03;
-
-class AttestationRecordContext {
-  protected:
-    virtual ~AttestationRecordContext() {}
-
-  public:
-    explicit AttestationRecordContext(KmVersion version) : version_(version) {}
-
-    KmVersion GetKmVersion() const { return version_; }
-
-    /**
-     * Returns the security level (SW or TEE) of this keymaster implementation.
-     */
-    virtual keymaster_security_level_t GetSecurityLevel() const {
-        return KM_SECURITY_LEVEL_SOFTWARE;
-    }
-
-    /**
-     * Verify that the device IDs provided in the attestation_params match the device's actual IDs
-     * and copy them to attestation. If *any* of the IDs do not match or verification is not
-     * possible, return KM_ERROR_CANNOT_ATTEST_IDS. If *all* IDs provided are successfully verified
-     * or no IDs were provided, return KM_ERROR_OK.
-     *
-     * If you do not support device ID attestation, ignore all arguments and return
-     * KM_ERROR_UNIMPLEMENTED.
-     */
-    virtual keymaster_error_t
-    VerifyAndCopyDeviceIds(const AuthorizationSet& /* attestation_params */,
-                           AuthorizationSet* /* attestation */) const {
-        return KM_ERROR_UNIMPLEMENTED;
-    }
-    /**
-     * Generate the current unique ID.
-     */
-    virtual keymaster_error_t GenerateUniqueId(uint64_t /*creation_date_time*/,
-                                               const keymaster_blob_t& /*application_id*/,
-                                               bool /*reset_since_rotation*/,
-                                               Buffer* /*unique_id*/) const {
-        return KM_ERROR_UNIMPLEMENTED;
-    }
-
-    /**
-     * Returns verified boot parameters for the Attestation Extension.  For hardware-based
-     * implementations, these will be the values reported by the bootloader. By default,  verified
-     * boot state is unknown, and KM_ERROR_UNIMPLEMENTED is returned.
-     */
-    virtual keymaster_error_t
-    GetVerifiedBootParams(keymaster_blob_t* /* verified_boot_key */,
-                          keymaster_blob_t* /* verified_boot_hash */,
-                          keymaster_verified_boot_t* /* verified_boot_state */,
-                          bool* /* device_locked */) const {
-        return KM_ERROR_UNIMPLEMENTED;
-    }
-
-  private:
-    const KmVersion version_;
-};
 
 /**
  * The OID for Android attestation records.  For the curious, it breaks down as follows:
@@ -386,7 +335,7 @@ static const char kEatTokenOid[] = "1.3.6.1.4.1.11129.2.1.25";
 keymaster_error_t build_attestation_record(const AuthorizationSet& attestation_params,
                                            AuthorizationSet software_enforced,
                                            AuthorizationSet tee_enforced,
-                                           const AttestationRecordContext& context,
+                                           const AttestationContext& context,
                                            UniquePtr<uint8_t[]>* asn1_key_desc,
                                            size_t* asn1_key_desc_len);
 
@@ -394,8 +343,8 @@ keymaster_error_t build_attestation_record(const AuthorizationSet& attestation_p
 // but encoded as a CBOR (EAT) structure rather than an ASN.1 structure.
 keymaster_error_t build_eat_record(const AuthorizationSet& attestation_params,
                                    AuthorizationSet software_enforced,
-                                   AuthorizationSet tee_enforced,
-                                   const AttestationRecordContext& context,
+                                   AuthorizationSet tee_enforced,      //
+                                   const AttestationContext& context,  //
                                    std::vector<uint8_t>* eat_token);
 
 /**
@@ -444,7 +393,22 @@ keymaster_error_t extract_auth_list(const KM_AUTH_LIST* record, AuthorizationSet
  * Convert a KeymasterContext::Version to the keymaster version number used in attestations.
  */
 inline static uint version_to_attestation_km_version(KmVersion version) {
-    return static_cast<uint>(version);
+    switch (version) {
+    default:
+    case KmVersion::KEYMASTER_1:
+    case KmVersion::KEYMASTER_1_1:
+        return 0;  // Attestation not actually supported.
+    case KmVersion::KEYMASTER_2:
+        return 2;
+    case KmVersion::KEYMASTER_3:
+        return 3;
+    case KmVersion::KEYMASTER_4:
+        return 4;
+    case KmVersion::KEYMASTER_4_1:
+        return 41;
+    case KmVersion::KEYMINT_1:
+        return 100;
+    }
 }
 
 /**
@@ -469,5 +433,3 @@ inline static uint version_to_attestation_version(KmVersion version) {
 }
 
 }  // namespace keymaster
-
-#endif  // SYSTEM_KEYMASTER_ATTESTATION_RECORD_H_
