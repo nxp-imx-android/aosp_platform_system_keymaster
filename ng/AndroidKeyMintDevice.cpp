@@ -32,6 +32,7 @@ namespace aidl::android::hardware::security::keymint {
 
 using namespace ::keymaster;
 using namespace km_utils;
+using secureclock::TimeStampToken;
 
 namespace {
 
@@ -41,10 +42,11 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
     KeyCharacteristics keyMintEnforced{keyMintSecurityLevel, {}};
 
     if (keyMintSecurityLevel != SecurityLevel::SOFTWARE) {
-        // We're pretending to be TRUSTED_ENVIRONMENT or STRONGBOX.  Only the entries in hw_enforced
-        // should be returned.
+        // We're pretending to be TRUSTED_ENVIRONMENT or STRONGBOX.
         keyMintEnforced.authorizations = kmParamSet2Aidl(hw_enforced);
-        return {std::move(keyMintEnforced)};
+        // Put all the software authorizations in the keystore list.
+        KeyCharacteristics keystoreEnforced{SecurityLevel::KEYSTORE, kmParamSet2Aidl(sw_enforced)};
+        return {std::move(keyMintEnforced), std::move(keystoreEnforced)};
     }
 
     KeyCharacteristics keystoreEnforced{SecurityLevel::KEYSTORE, {}};
@@ -97,6 +99,8 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_AUTH_TOKEN:
         case KM_TAG_CERTIFICATE_SERIAL:
         case KM_TAG_CERTIFICATE_SUBJECT:
+        case KM_TAG_CERTIFICATE_NOT_AFTER:
+        case KM_TAG_CERTIFICATE_NOT_BEFORE:
         case KM_TAG_CONFIRMATION_TOKEN:
         case KM_TAG_DEVICE_UNIQUE_ATTESTATION:
         case KM_TAG_IDENTITY_CREDENTIAL_KEY:
@@ -193,7 +197,7 @@ ScopedAStatus AndroidKeyMintDevice::getHardwareInfo(KeyMintHardwareInfo* info) {
     info->securityLevel = securityLevel_;
     info->keyMintName = "FakeKeyMintDevice";
     info->keyMintAuthorName = "Google";
-
+    info->timestampTokenRequired = false;
     return ScopedAStatus::ok();
 }
 
@@ -212,10 +216,18 @@ ScopedAStatus AndroidKeyMintDevice::addRngEntropy(const vector<uint8_t>& data) {
 }
 
 ScopedAStatus AndroidKeyMintDevice::generateKey(const vector<KeyParameter>& keyParams,
+                                                const optional<AttestationKey>& attestationKey,
                                                 KeyCreationResult* creationResult) {
 
     GenerateKeyRequest request(impl_->message_version());
     request.key_description.Reinitialize(KmParamSet(keyParams));
+    if (attestationKey) {
+        request.attestation_signing_key_blob =
+            KeymasterKeyBlob(attestationKey->keyBlob.data(), attestationKey->keyBlob.size());
+        request.attest_key_params.Reinitialize(KmParamSet(attestationKey->attestKeyParams));
+        request.issuer_subject = KeymasterBlob(attestationKey->issuerSubjectName.data(),
+                                               attestationKey->issuerSubjectName.size());
+    }
 
     GenerateKeyResponse response(impl_->message_version());
     impl_->GenerateKey(request, &response);
@@ -242,12 +254,20 @@ ScopedAStatus AndroidKeyMintDevice::generateKey(const vector<KeyParameter>& keyP
 
 ScopedAStatus AndroidKeyMintDevice::importKey(const vector<KeyParameter>& keyParams,
                                               KeyFormat keyFormat, const vector<uint8_t>& keyData,
+                                              const optional<AttestationKey>& attestationKey,
                                               KeyCreationResult* creationResult) {
 
     ImportKeyRequest request(impl_->message_version());
     request.key_description.Reinitialize(KmParamSet(keyParams));
     request.key_format = legacy_enum_conversion(keyFormat);
     request.key_data = KeymasterKeyBlob(keyData.data(), keyData.size());
+    if (attestationKey) {
+        request.attestation_signing_key_blob =
+            KeymasterKeyBlob(attestationKey->keyBlob.data(), attestationKey->keyBlob.size());
+        request.attest_key_params.Reinitialize(KmParamSet(attestationKey->attestKeyParams));
+        request.issuer_subject = KeymasterBlob(attestationKey->issuerSubjectName.data(),
+                                               attestationKey->issuerSubjectName.size());
+    }
 
     ImportKeyResponse response(impl_->message_version());
     impl_->ImportKey(request, &response);
@@ -264,12 +284,13 @@ ScopedAStatus AndroidKeyMintDevice::importKey(const vector<KeyParameter>& keyPar
     return ScopedAStatus::ok();
 }
 
-ScopedAStatus AndroidKeyMintDevice::importWrappedKey(const vector<uint8_t>& wrappedKeyData,
-                                                     const vector<uint8_t>& wrappingKeyBlob,
-                                                     const vector<uint8_t>& maskingKey,
-                                                     const vector<KeyParameter>& unwrappingParams,
-                                                     int64_t passwordSid, int64_t biometricSid,
-                                                     KeyCreationResult* creationResult) {
+ScopedAStatus
+AndroidKeyMintDevice::importWrappedKey(const vector<uint8_t>& wrappedKeyData,         //
+                                       const vector<uint8_t>& wrappingKeyBlob,        //
+                                       const vector<uint8_t>& maskingKey,             //
+                                       const vector<KeyParameter>& unwrappingParams,  //
+                                       int64_t passwordSid, int64_t biometricSid,     //
+                                       KeyCreationResult* creationResult) {
 
     ImportWrappedKeyRequest request(impl_->message_version());
     request.SetWrappedMaterial(wrappedKeyData.data(), wrappedKeyData.size());
@@ -363,8 +384,27 @@ ScopedAStatus AndroidKeyMintDevice::begin(KeyPurpose purpose, const vector<uint8
     return ScopedAStatus::ok();
 }
 
-IKeyMintDevice* CreateKeyMintDevice(SecurityLevel securityLevel) {
+ScopedAStatus AndroidKeyMintDevice::deviceLocked(
+    bool in_passwordOnly,
+    const std::optional<::aidl::android::hardware::security::secureclock::TimeStampToken>&
+        in_timestampToken) {
+    DeviceLockedRequest request(impl_->message_version());
+    request.passwordOnly = in_passwordOnly;
+    if (in_timestampToken.has_value()) {
+        request.token.challenge = in_timestampToken->challenge;
+        request.token.mac = {in_timestampToken->mac.data(), in_timestampToken->mac.size()};
+        request.token.timestamp = in_timestampToken->timestamp.milliSeconds;
+    }
+    DeviceLockedResponse response = impl_->DeviceLocked(request);
+    return kmError2ScopedAStatus(response.error);
+}
 
+ScopedAStatus AndroidKeyMintDevice::earlyBootEnded() {
+    EarlyBootEndedResponse response = impl_->EarlyBootEnded();
+    return kmError2ScopedAStatus(response.error);
+}
+
+IKeyMintDevice* CreateKeyMintDevice(SecurityLevel securityLevel) {
     return ::new AndroidKeyMintDevice(securityLevel);
 }
 

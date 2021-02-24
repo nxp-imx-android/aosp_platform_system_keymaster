@@ -338,6 +338,8 @@ struct GenerateKeyRequest : public KeymasterMessage {
 
     AuthorizationSet key_description;
     KeymasterKeyBlob attestation_signing_key_blob;
+    AuthorizationSet attest_key_params;
+    KeymasterBlob issuer_subject;
 };
 
 struct GenerateKeyResponse : public KeymasterResponse {
@@ -504,6 +506,8 @@ struct ImportKeyRequest : public KeymasterMessage {
     keymaster_key_format_t key_format;
     KeymasterKeyBlob key_data;
     KeymasterKeyBlob attestation_signing_key_blob;
+    AuthorizationSet attest_key_params;
+    KeymasterBlob issuer_subject;
 };
 
 struct ImportKeyResponse : public KeymasterResponse {
@@ -796,7 +800,6 @@ struct ImportWrappedKeyRequest : public KeymasterMessage {
     AuthorizationSet additional_params;
     uint64_t password_sid;
     uint64_t biometric_sid;
-    KeymasterKeyBlob attestation_signing_key_blob;
 };
 
 struct ImportWrappedKeyResponse : public KeymasterResponse {
@@ -975,6 +978,59 @@ struct GetVersion2Response : public KeymasterResponse {
     uint32_t max_message_version;
     KmVersion km_version;
     uint32_t km_date;
+};
+
+struct TimestampToken : public Serializable {
+    explicit TimestampToken() = default;
+    TimestampToken(TimestampToken&& other) {
+        challenge = other.challenge;
+        timestamp = other.timestamp;
+        security_level = other.security_level;
+        mac = move(other.mac);
+    }
+    size_t SerializedSize() const override {
+        return sizeof(challenge) + sizeof(timestamp) + sizeof(security_level) +
+               mac.SerializedSize();
+    }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        buf = append_uint64_to_buf(buf, end, challenge);
+        buf = append_uint64_to_buf(buf, end, timestamp);
+        buf = append_uint32_to_buf(buf, end, security_level);
+        return mac.Serialize(buf, end);
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_uint64_from_buf(buf_ptr, end, &challenge) &&
+               copy_uint64_from_buf(buf_ptr, end, &timestamp) &&
+               copy_uint32_from_buf(buf_ptr, end, &security_level) && mac.Deserialize(buf_ptr, end);
+    }
+    uint64_t challenge{};
+    uint64_t timestamp{};
+    keymaster_security_level_t security_level{};
+    KeymasterBlob mac{};
+};
+
+struct GenerateTimestampTokenRequest : public KeymasterMessage {
+    explicit GenerateTimestampTokenRequest(int32_t ver) : KeymasterMessage(ver), challenge{} {}
+    size_t SerializedSize() const override { return sizeof(challenge); }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        return append_uint64_to_buf(buf, end, challenge);
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_uint64_from_buf(buf_ptr, end, &challenge);
+    }
+    uint64_t challenge;
+};
+
+struct GenerateTimestampTokenResponse : public KeymasterResponse {
+    explicit GenerateTimestampTokenResponse(int32_t ver) : KeymasterResponse(ver), token{} {}
+    size_t NonErrorSerializedSize() const override { return token.SerializedSize(); }
+    uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t* end) const override {
+        return token.Serialize(buf, end);
+    }
+    bool NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return token.Deserialize(buf_ptr, end);
+    }
+    TimestampToken token;
 };
 
 }  // namespace keymaster

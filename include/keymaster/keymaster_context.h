@@ -23,6 +23,7 @@
 #include <keymaster/android_keymaster_utils.h>
 #include <keymaster/keymaster_enforcement.h>
 #include <keymaster/km_version.h>
+#include <keymaster/secure_key_storage.h>
 
 namespace keymaster {
 
@@ -145,10 +146,17 @@ class KeymasterContext {
     virtual KeymasterEnforcement* enforcement_policy() = 0;
 
     /**
-     * Generate an attestation certificate, with chain, using the factory attestation key.
+     * Generate an attestation certificate, with chain.
+     *
+     * If attest_key is null, the certificate will be signed with the factory attestation key (from
+     * AttestationContext) and have the issuer subject set to the subject name from the signing key
+     * certificate.  If attest_key is non-null, it will be used to sign the certificate and the
+     * provided issuer subject will be used (must contain a DER-encoded X.509 NAME).
      */
     virtual CertificateChain GenerateAttestation(const Key& key,
                                                  const AuthorizationSet& attest_params,
+                                                 UniquePtr<Key> attest_key,
+                                                 const KeymasterBlob& issuer_subject,
                                                  keymaster_error_t* error) const = 0;
 
     /**
@@ -170,6 +178,12 @@ class KeymasterContext {
               const AuthorizationSet& wrapping_key_params, const KeymasterKeyBlob& masking_key,
               AuthorizationSet* wrapped_key_params, keymaster_key_format_t* wrapped_key_format,
               KeymasterKeyBlob* wrapped_key_material) const = 0;
+
+    /**
+     * Return the secure key storage for this context, or null if there is no available secure key
+     * storage.
+     */
+    virtual SecureKeyStorage* secure_key_storage() { return nullptr; }
 
   private:
     // Uncopyable.

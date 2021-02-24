@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <keymaster/attestation_record.h>
+#include <keymaster/km_openssl/attestation_record.h>
 
 #include <assert.h>
 #include <math.h>
@@ -537,9 +537,13 @@ keymaster_error_t build_auth_list(const AuthorizationSet& auth_list, KM_AUTH_LIS
         case KM_TAG_MAC_LENGTH:
         case KM_TAG_ATTESTATION_CHALLENGE:
         case KM_TAG_RESET_SINCE_ID_ROTATION:
+        case KM_TAG_KDF:
+
+        /* Tags ignored because they're used only to provide for certificate generation */
         case KM_TAG_CERTIFICATE_SERIAL:
         case KM_TAG_CERTIFICATE_SUBJECT:
-        case KM_TAG_KDF:
+        case KM_TAG_CERTIFICATE_NOT_BEFORE:
+        case KM_TAG_CERTIFICATE_NOT_AFTER:
 
         /* Tags ignored because they have no meaning off-device */
         case KM_TAG_USER_ID:
