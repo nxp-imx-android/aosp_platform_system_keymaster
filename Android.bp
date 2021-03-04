@@ -38,6 +38,7 @@ cc_defaults {
 
 cc_library_shared {
     name: "libkeymaster_messages",
+    recovery_available: true,
     srcs: [
         "android_keymaster/android_keymaster_messages.cpp",
         "android_keymaster/android_keymaster_utils.cpp",
