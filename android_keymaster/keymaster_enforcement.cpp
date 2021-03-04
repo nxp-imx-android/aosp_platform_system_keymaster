@@ -131,6 +131,7 @@ keymaster_error_t KeymasterEnforcement::AuthorizeOperation(const keymaster_purpo
         case KM_PURPOSE_DERIVE_KEY:
         case KM_PURPOSE_WRAP:
         case KM_PURPOSE_AGREE_KEY:
+        case KM_PURPOSE_ATTEST_KEY:
             break;
         };
     };
@@ -328,6 +329,8 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         case KM_TAG_DEVICE_UNIQUE_ATTESTATION:
         case KM_TAG_CERTIFICATE_SUBJECT:
         case KM_TAG_CERTIFICATE_SERIAL:
+        case KM_TAG_CERTIFICATE_NOT_AFTER:
+        case KM_TAG_CERTIFICATE_NOT_BEFORE:
             return KM_ERROR_INVALID_KEY_BLOB;
 
         /* Tags used for cryptographic parameters in keygen.  Nothing to enforce. */
@@ -388,6 +391,7 @@ keymaster_error_t KeymasterEnforcement::AuthorizeBegin(const keymaster_purpose_t
         case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
         case KM_TAG_CONFIRMATION_TOKEN:
         case KM_TAG_USAGE_COUNT_LIMIT:
+        case KM_TAG_MAX_BOOT_LEVEL:
             break;
 
         case KM_TAG_IDENTITY_CREDENTIAL_KEY:
@@ -535,6 +539,10 @@ bool KeymasterEnforcement::AuthTokenMatches(const AuthProxy& auth_set,
 
     // Survived the whole gauntlet.  We have authentage!
     return true;
+}
+
+keymaster_error_t KeymasterEnforcement::GenerateTimestampToken(TimestampToken* /*token*/) {
+    return KM_ERROR_UNIMPLEMENTED;
 }
 
 bool AccessTimeMap::LastKeyAccessTime(km_id_t keyid, uint32_t* last_access_time) const {

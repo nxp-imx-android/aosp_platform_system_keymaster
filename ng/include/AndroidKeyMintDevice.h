@@ -25,10 +25,12 @@ class AndroidKeymaster;
 }
 
 namespace aidl::android::hardware::security::keymint {
-
 using ::ndk::ScopedAStatus;
+using std::optional;
 using std::shared_ptr;
 using std::vector;
+
+using secureclock::TimeStampToken;
 
 class AndroidKeyMintDevice : public BnKeyMintDevice {
   public:
@@ -40,10 +42,12 @@ class AndroidKeyMintDevice : public BnKeyMintDevice {
     ScopedAStatus addRngEntropy(const vector<uint8_t>& data) override;
 
     ScopedAStatus generateKey(const vector<KeyParameter>& keyParams,
+                              const optional<AttestationKey>& attestationKey,
                               KeyCreationResult* creationResult) override;
 
     ScopedAStatus importKey(const vector<KeyParameter>& keyParams, KeyFormat keyFormat,
                             const vector<uint8_t>& keyData,
+                            const optional<AttestationKey>& attestationKey,
                             KeyCreationResult* creationResult) override;
 
     ScopedAStatus importWrappedKey(const vector<uint8_t>& wrappedKeyData,
@@ -64,6 +68,15 @@ class AndroidKeyMintDevice : public BnKeyMintDevice {
     ScopedAStatus begin(KeyPurpose purpose, const vector<uint8_t>& keyBlob,
                         const vector<KeyParameter>& params, const HardwareAuthToken& authToken,
                         BeginResult* result) override;
+
+    ScopedAStatus deviceLocked(bool passwordOnly,
+                               const optional<TimeStampToken>& timestampToken) override;
+    ScopedAStatus earlyBootEnded() override;
+
+    ScopedAStatus performOperation(const vector<uint8_t>& request,
+                                   vector<uint8_t>* response) override;
+
+    shared_ptr<::keymaster::AndroidKeymaster>& getKeymasterImpl() { return impl_; }
 
   protected:
     std::shared_ptr<::keymaster::AndroidKeymaster> impl_;

@@ -32,27 +32,29 @@ namespace aidl::android::hardware::security::keymint {
 
 using namespace ::keymaster;
 using namespace km_utils;
+using secureclock::TimeStampToken;
 
 namespace {
 
 vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecurityLevel,
                                                      const AuthorizationSet& sw_enforced,
                                                      const AuthorizationSet& hw_enforced) {
-    KeyCharacteristics enforced;
+    KeyCharacteristics keyMintEnforced{keyMintSecurityLevel, {}};
 
-    enforced.securityLevel = keyMintSecurityLevel;
     if (keyMintSecurityLevel != SecurityLevel::SOFTWARE) {
-        // We're pretending to be TRUSTED_ENVIRONMENT or STRONGBOX.  Only the entries in hw_enforced
-        // should be returned.
-        enforced.authorizations = kmParamSet2Aidl(hw_enforced);
-        KeyCharacteristics enforced{keyMintSecurityLevel, kmParamSet2Aidl(hw_enforced)};
-        return {std::move(enforced)};
+        // We're pretending to be TRUSTED_ENVIRONMENT or STRONGBOX.
+        keyMintEnforced.authorizations = kmParamSet2Aidl(hw_enforced);
+        // Put all the software authorizations in the keystore list.
+        KeyCharacteristics keystoreEnforced{SecurityLevel::KEYSTORE, kmParamSet2Aidl(sw_enforced)};
+        return {std::move(keyMintEnforced), std::move(keystoreEnforced)};
     }
 
+    KeyCharacteristics keystoreEnforced{SecurityLevel::KEYSTORE, {}};
     CHECK(hw_enforced.empty()) << "Hardware-enforced list is non-empty for pure SW KeyMint";
 
-    // This is a pure software implementation, so all tags are in sw_enforced.  We need to walk
-    // through the SW-enforced list and figure out which tags to return and which not.
+    // This is a pure software implementation, so all tags are in sw_enforced.
+    // We need to walk through the SW-enforced list and figure out which tags to
+    // return in the software list and which in the keystore list.
 
     for (auto& entry : sw_enforced) {
         switch (entry.tag) {
@@ -60,38 +62,31 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_ECIES_SINGLE_HASH_MODE:
         case KM_TAG_INVALID:
         case KM_TAG_KDF:
+        case KM_TAG_ROLLBACK_RESISTANCE:
             CHECK(false) << "We shouldn't see tag " << entry.tag;
             break;
 
         /* Unimplemented */
         case KM_TAG_ALLOW_WHILE_ON_BODY:
-        case KM_TAG_APPLICATION_ID:
         case KM_TAG_BOOTLOADER_ONLY:
         case KM_TAG_EARLY_BOOT_ONLY:
-        case KM_TAG_ROLLBACK_RESISTANCE:
         case KM_TAG_ROLLBACK_RESISTANT:
         case KM_TAG_STORAGE_KEY:
+        case KM_TAG_TRUSTED_CONFIRMATION_REQUIRED:
+        case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
             break;
 
         /* Unenforceable */
-        case KM_TAG_ACTIVE_DATETIME:
-        case KM_TAG_ALL_APPLICATIONS:
-        case KM_TAG_ALL_USERS:
         case KM_TAG_CREATION_DATETIME:
-        case KM_TAG_ORIGINATION_EXPIRE_DATETIME:
-        case KM_TAG_TRUSTED_CONFIRMATION_REQUIRED:
-        case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
-        case KM_TAG_USAGE_EXPIRE_DATETIME:
-        case KM_TAG_USER_ID:
             break;
 
         /* Disallowed in KeyCharacteristics */
         case KM_TAG_APPLICATION_DATA:
+        case KM_TAG_ATTESTATION_APPLICATION_ID:
             break;
 
         /* Not key characteristics */
         case KM_TAG_ASSOCIATED_DATA:
-        case KM_TAG_ATTESTATION_APPLICATION_ID:
         case KM_TAG_ATTESTATION_CHALLENGE:
         case KM_TAG_ATTESTATION_ID_BRAND:
         case KM_TAG_ATTESTATION_ID_DEVICE:
@@ -104,6 +99,8 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_AUTH_TOKEN:
         case KM_TAG_CERTIFICATE_SERIAL:
         case KM_TAG_CERTIFICATE_SUBJECT:
+        case KM_TAG_CERTIFICATE_NOT_AFTER:
+        case KM_TAG_CERTIFICATE_NOT_BEFORE:
         case KM_TAG_CONFIRMATION_TOKEN:
         case KM_TAG_DEVICE_UNIQUE_ATTESTATION:
         case KM_TAG_IDENTITY_CREDENTIAL_KEY:
@@ -114,8 +111,9 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_UNIQUE_ID:
             break;
 
-        /* Enforced */
+        /* KeyMint-enforced */
         case KM_TAG_ALGORITHM:
+        case KM_TAG_APPLICATION_ID:
         case KM_TAG_AUTH_TIMEOUT:
         case KM_TAG_BLOB_USAGE_REQUIREMENTS:
         case KM_TAG_BLOCK_MODE:
@@ -138,15 +136,32 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_RSA_OAEP_MGF_DIGEST:
         case KM_TAG_RSA_PUBLIC_EXPONENT:
         case KM_TAG_UNLOCKED_DEVICE_REQUIRED:
-        case KM_TAG_USAGE_COUNT_LIMIT:
         case KM_TAG_USER_AUTH_TYPE:
         case KM_TAG_USER_SECURE_ID:
         case KM_TAG_VENDOR_PATCHLEVEL:
-            enforced.authorizations.push_back(kmParam2Aidl(entry));
+            keyMintEnforced.authorizations.push_back(kmParam2Aidl(entry));
+            break;
+
+        /* Keystore-enforced */
+        case KM_TAG_ACTIVE_DATETIME:
+        case KM_TAG_ALL_APPLICATIONS:
+        case KM_TAG_ALL_USERS:
+        case KM_TAG_MAX_BOOT_LEVEL:
+        case KM_TAG_ORIGINATION_EXPIRE_DATETIME:
+        case KM_TAG_USAGE_EXPIRE_DATETIME:
+        case KM_TAG_USER_ID:
+        case KM_TAG_USAGE_COUNT_LIMIT:
+            keystoreEnforced.authorizations.push_back(kmParam2Aidl(entry));
+            break;
         }
     }
 
-    return {std::move(enforced)};
+    vector<KeyCharacteristics> retval;
+    retval.reserve(2);
+    if (!keyMintEnforced.authorizations.empty()) retval.push_back(std::move(keyMintEnforced));
+    if (!keystoreEnforced.authorizations.empty()) retval.push_back(std::move(keystoreEnforced));
+
+    return retval;
 }
 
 Certificate convertCertificate(const keymaster_blob_t& cert) {
@@ -183,7 +198,7 @@ ScopedAStatus AndroidKeyMintDevice::getHardwareInfo(KeyMintHardwareInfo* info) {
     info->securityLevel = securityLevel_;
     info->keyMintName = "FakeKeyMintDevice";
     info->keyMintAuthorName = "Google";
-
+    info->timestampTokenRequired = false;
     return ScopedAStatus::ok();
 }
 
@@ -202,10 +217,18 @@ ScopedAStatus AndroidKeyMintDevice::addRngEntropy(const vector<uint8_t>& data) {
 }
 
 ScopedAStatus AndroidKeyMintDevice::generateKey(const vector<KeyParameter>& keyParams,
+                                                const optional<AttestationKey>& attestationKey,
                                                 KeyCreationResult* creationResult) {
 
     GenerateKeyRequest request(impl_->message_version());
     request.key_description.Reinitialize(KmParamSet(keyParams));
+    if (attestationKey) {
+        request.attestation_signing_key_blob =
+            KeymasterKeyBlob(attestationKey->keyBlob.data(), attestationKey->keyBlob.size());
+        request.attest_key_params.Reinitialize(KmParamSet(attestationKey->attestKeyParams));
+        request.issuer_subject = KeymasterBlob(attestationKey->issuerSubjectName.data(),
+                                               attestationKey->issuerSubjectName.size());
+    }
 
     GenerateKeyResponse response(impl_->message_version());
     impl_->GenerateKey(request, &response);
@@ -232,12 +255,20 @@ ScopedAStatus AndroidKeyMintDevice::generateKey(const vector<KeyParameter>& keyP
 
 ScopedAStatus AndroidKeyMintDevice::importKey(const vector<KeyParameter>& keyParams,
                                               KeyFormat keyFormat, const vector<uint8_t>& keyData,
+                                              const optional<AttestationKey>& attestationKey,
                                               KeyCreationResult* creationResult) {
 
     ImportKeyRequest request(impl_->message_version());
     request.key_description.Reinitialize(KmParamSet(keyParams));
     request.key_format = legacy_enum_conversion(keyFormat);
-    request.SetKeyMaterial(keyData.data(), keyData.size());
+    request.key_data = KeymasterKeyBlob(keyData.data(), keyData.size());
+    if (attestationKey) {
+        request.attestation_signing_key_blob =
+            KeymasterKeyBlob(attestationKey->keyBlob.data(), attestationKey->keyBlob.size());
+        request.attest_key_params.Reinitialize(KmParamSet(attestationKey->attestKeyParams));
+        request.issuer_subject = KeymasterBlob(attestationKey->issuerSubjectName.data(),
+                                               attestationKey->issuerSubjectName.size());
+    }
 
     ImportKeyResponse response(impl_->message_version());
     impl_->ImportKey(request, &response);
@@ -254,12 +285,13 @@ ScopedAStatus AndroidKeyMintDevice::importKey(const vector<KeyParameter>& keyPar
     return ScopedAStatus::ok();
 }
 
-ScopedAStatus AndroidKeyMintDevice::importWrappedKey(const vector<uint8_t>& wrappedKeyData,
-                                                     const vector<uint8_t>& wrappingKeyBlob,
-                                                     const vector<uint8_t>& maskingKey,
-                                                     const vector<KeyParameter>& unwrappingParams,
-                                                     int64_t passwordSid, int64_t biometricSid,
-                                                     KeyCreationResult* creationResult) {
+ScopedAStatus
+AndroidKeyMintDevice::importWrappedKey(const vector<uint8_t>& wrappedKeyData,         //
+                                       const vector<uint8_t>& wrappingKeyBlob,        //
+                                       const vector<uint8_t>& maskingKey,             //
+                                       const vector<KeyParameter>& unwrappingParams,  //
+                                       int64_t passwordSid, int64_t biometricSid,     //
+                                       KeyCreationResult* creationResult) {
 
     ImportWrappedKeyRequest request(impl_->message_version());
     request.SetWrappedMaterial(wrappedKeyData.data(), wrappedKeyData.size());
@@ -353,8 +385,30 @@ ScopedAStatus AndroidKeyMintDevice::begin(KeyPurpose purpose, const vector<uint8
     return ScopedAStatus::ok();
 }
 
-IKeyMintDevice* CreateKeyMintDevice(SecurityLevel securityLevel) {
+ScopedAStatus AndroidKeyMintDevice::deviceLocked(
+    bool passwordOnly, const std::optional<secureclock::TimeStampToken>& timestampToken) {
+    DeviceLockedRequest request(impl_->message_version());
+    request.passwordOnly = passwordOnly;
+    if (timestampToken.has_value()) {
+        request.token.challenge = timestampToken->challenge;
+        request.token.mac = {timestampToken->mac.data(), timestampToken->mac.size()};
+        request.token.timestamp = timestampToken->timestamp.milliSeconds;
+    }
+    DeviceLockedResponse response = impl_->DeviceLocked(request);
+    return kmError2ScopedAStatus(response.error);
+}
 
+ScopedAStatus AndroidKeyMintDevice::earlyBootEnded() {
+    EarlyBootEndedResponse response = impl_->EarlyBootEnded();
+    return kmError2ScopedAStatus(response.error);
+}
+
+ScopedAStatus AndroidKeyMintDevice::performOperation(const vector<uint8_t>& /* request */,
+                                                     vector<uint8_t>* /* response */) {
+    return kmError2ScopedAStatus(KM_ERROR_UNIMPLEMENTED);
+}
+
+IKeyMintDevice* CreateKeyMintDevice(SecurityLevel securityLevel) {
     return ::new AndroidKeyMintDevice(securityLevel);
 }
 

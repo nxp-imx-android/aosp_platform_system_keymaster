@@ -94,8 +94,24 @@ TEST(RoundTrip, GenerateKeyRequest) {
     for (int ver = 0; ver <= kMaxMessageVersion; ++ver) {
         GenerateKeyRequest req(ver);
         req.key_description.Reinitialize(params, array_length(params));
-        UniquePtr<GenerateKeyRequest> deserialized(round_trip(ver, req, 78));
+        req.attestation_signing_key_blob =
+            KeymasterKeyBlob(reinterpret_cast<const uint8_t*>("foo"), 3);
+        req.attest_key_params.Reinitialize(params, array_length(params));
+        req.issuer_subject = KeymasterBlob(reinterpret_cast<const uint8_t*>("bar"), 3);
+
+        UniquePtr<GenerateKeyRequest> deserialized(round_trip(ver, req, ver < 4 ? 78 : 170));
         EXPECT_EQ(deserialized->key_description, req.key_description);
+        if (ver < 4) {
+            EXPECT_EQ(0U, deserialized->attestation_signing_key_blob.key_material_size);
+        } else {
+            EXPECT_EQ(3U, deserialized->attestation_signing_key_blob.key_material_size);
+            EXPECT_EQ(0, memcmp(req.attestation_signing_key_blob.key_material,
+                                deserialized->attestation_signing_key_blob.key_material,
+                                deserialized->attestation_signing_key_blob.key_material_size));
+            EXPECT_EQ(deserialized->attest_key_params, req.attest_key_params);
+            EXPECT_EQ(0, memcmp(req.issuer_subject.data, deserialized->issuer_subject.data,
+                                deserialized->issuer_subject.data_length));
+        }
     }
 }
 
@@ -381,13 +397,29 @@ TEST(RoundTrip, ImportKeyRequest) {
         ImportKeyRequest msg(ver);
         msg.key_description.Reinitialize(params, array_length(params));
         msg.key_format = KM_KEY_FORMAT_X509;
-        msg.SetKeyMaterial("foo", 3);
+        msg.key_data = KeymasterKeyBlob(reinterpret_cast<const uint8_t*>("foo"), 3);
+        msg.attestation_signing_key_blob =
+            KeymasterKeyBlob(reinterpret_cast<const uint8_t*>("bar"), 3);
+        msg.attest_key_params.Reinitialize(params, array_length(params));
+        msg.issuer_subject = KeymasterBlob(reinterpret_cast<const uint8_t*>("bar"), 3);
 
-        UniquePtr<ImportKeyRequest> deserialized(round_trip(ver, msg, 89));
+        UniquePtr<ImportKeyRequest> deserialized(round_trip(ver, msg, ver < 4 ? 89 : 181));
         EXPECT_EQ(msg.key_description, deserialized->key_description);
         EXPECT_EQ(msg.key_format, deserialized->key_format);
-        EXPECT_EQ(msg.key_data_length, deserialized->key_data_length);
-        EXPECT_EQ(0, memcmp(msg.key_data, deserialized->key_data, msg.key_data_length));
+        EXPECT_EQ(msg.key_data.key_material_size, deserialized->key_data.key_material_size);
+        EXPECT_EQ(0, memcmp(msg.key_data.key_material, deserialized->key_data.key_material,
+                            msg.key_data.key_material_size));
+        if (ver < 4) {
+            EXPECT_EQ(0U, deserialized->attestation_signing_key_blob.key_material_size);
+        } else {
+            EXPECT_EQ(3U, deserialized->attestation_signing_key_blob.key_material_size);
+            EXPECT_EQ(0, memcmp(msg.attestation_signing_key_blob.key_material,
+                                deserialized->attestation_signing_key_blob.key_material,
+                                msg.attestation_signing_key_blob.key_material_size));
+            EXPECT_EQ(deserialized->attest_key_params, msg.attest_key_params);
+            EXPECT_EQ(0, memcmp(msg.issuer_subject.data, deserialized->issuer_subject.data,
+                                deserialized->issuer_subject.data_length));
+        }
     }
 }
 
@@ -683,6 +715,34 @@ TEST(RoundTrip, UpgradeKeyResponse) {
     }
 }
 
+TEST(RoundTrip, GenerateTimestampTokenRequest) {
+    for (int ver = 0; ver <= kMaxMessageVersion; ++ver) {
+        GenerateTimestampTokenRequest msg(ver);
+        msg.challenge = 1;
+        UniquePtr<GenerateTimestampTokenRequest> deserialized(round_trip(ver, msg, 8));
+        EXPECT_EQ(1U, deserialized->challenge);
+    }
+}
+
+TEST(RoundTrip, GenerateTimestampTokenResponse) {
+    for (int ver = 0; ver <= kMaxMessageVersion; ++ver) {
+        GenerateTimestampTokenResponse msg(ver);
+        msg.error = KM_ERROR_OK;
+        msg.token.challenge = 1;
+        msg.token.timestamp = 2;
+        msg.token.security_level = KM_SECURITY_LEVEL_SOFTWARE;
+        msg.token.mac.data = dup_array(TEST_DATA);
+        msg.token.mac.data_length = array_length(TEST_DATA);
+        UniquePtr<GenerateTimestampTokenResponse> deserialized(round_trip(ver, msg, 39));
+        EXPECT_EQ(1U, deserialized->token.challenge);
+        EXPECT_EQ(2U, deserialized->token.timestamp);
+        EXPECT_EQ(KM_SECURITY_LEVEL_SOFTWARE, deserialized->token.security_level);
+        EXPECT_EQ(msg.token.mac.data_length, deserialized->token.mac.data_length);
+        EXPECT_EQ(
+            0, memcmp(msg.token.mac.data, deserialized->token.mac.data, msg.token.mac.data_length));
+    }
+}
+
 uint8_t msgbuf[] = {
     220, 88,  183, 255, 71,  1,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,   0,
     0,   173, 0,   0,   0,   228, 174, 98,  187, 191, 135, 253, 200, 51,  230, 114, 247, 151, 109,
@@ -777,6 +837,8 @@ GARBAGE_TEST(AttestKeyRequest);
 GARBAGE_TEST(AttestKeyResponse);
 GARBAGE_TEST(UpgradeKeyRequest);
 GARBAGE_TEST(UpgradeKeyResponse);
+GARBAGE_TEST(GenerateTimestampTokenRequest);
+GARBAGE_TEST(GenerateTimestampTokenResponse);
 
 }  // namespace test
 
