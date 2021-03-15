@@ -146,6 +146,7 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_ACTIVE_DATETIME:
         case KM_TAG_ALL_APPLICATIONS:
         case KM_TAG_ALL_USERS:
+        case KM_TAG_MAX_BOOT_LEVEL:
         case KM_TAG_ORIGINATION_EXPIRE_DATETIME:
         case KM_TAG_USAGE_EXPIRE_DATETIME:
         case KM_TAG_USER_ID:
@@ -385,15 +386,13 @@ ScopedAStatus AndroidKeyMintDevice::begin(KeyPurpose purpose, const vector<uint8
 }
 
 ScopedAStatus AndroidKeyMintDevice::deviceLocked(
-    bool in_passwordOnly,
-    const std::optional<::aidl::android::hardware::security::secureclock::TimeStampToken>&
-        in_timestampToken) {
+    bool passwordOnly, const std::optional<secureclock::TimeStampToken>& timestampToken) {
     DeviceLockedRequest request(impl_->message_version());
-    request.passwordOnly = in_passwordOnly;
-    if (in_timestampToken.has_value()) {
-        request.token.challenge = in_timestampToken->challenge;
-        request.token.mac = {in_timestampToken->mac.data(), in_timestampToken->mac.size()};
-        request.token.timestamp = in_timestampToken->timestamp.milliSeconds;
+    request.passwordOnly = passwordOnly;
+    if (timestampToken.has_value()) {
+        request.token.challenge = timestampToken->challenge;
+        request.token.mac = {timestampToken->mac.data(), timestampToken->mac.size()};
+        request.token.timestamp = timestampToken->timestamp.milliSeconds;
     }
     DeviceLockedResponse response = impl_->DeviceLocked(request);
     return kmError2ScopedAStatus(response.error);
@@ -402,6 +401,11 @@ ScopedAStatus AndroidKeyMintDevice::deviceLocked(
 ScopedAStatus AndroidKeyMintDevice::earlyBootEnded() {
     EarlyBootEndedResponse response = impl_->EarlyBootEnded();
     return kmError2ScopedAStatus(response.error);
+}
+
+ScopedAStatus AndroidKeyMintDevice::performOperation(const vector<uint8_t>& /* request */,
+                                                     vector<uint8_t>* /* response */) {
+    return kmError2ScopedAStatus(KM_ERROR_UNIMPLEMENTED);
 }
 
 IKeyMintDevice* CreateKeyMintDevice(SecurityLevel securityLevel) {
