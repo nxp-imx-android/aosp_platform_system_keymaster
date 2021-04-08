@@ -45,14 +45,12 @@ cc_library_shared {
         "android_keymaster/keymaster_tags.cpp",
         "android_keymaster/logger.cpp",
         "android_keymaster/serializable.cpp",
-        "android_keymaster/keymaster_stl.cpp",
     ],
     header_libs: ["libhardware_headers"],
     defaults: ["keymaster_defaults" ],
     clang_cflags: [
         "-DKEYMASTER_NAME_TAGS",
     ],
-    stl: "none",
     export_include_dirs: ["include"],
     host_supported: true,
     target: {
@@ -76,7 +74,6 @@ cc_library {
         "android_keymaster/android_keymaster_utils.cpp",
         "android_keymaster/authorization_set.cpp",
         "android_keymaster/keymaster_enforcement.cpp",
-        "android_keymaster/keymaster_stl.cpp",
         "android_keymaster/keymaster_tags.cpp",
         "android_keymaster/logger.cpp",
         "android_keymaster/operation.cpp",
@@ -124,14 +121,6 @@ cc_library {
     header_libs: ["libhardware_headers"],
     export_header_lib_headers: ["libhardware_headers"],
     defaults: ["keymaster_defaults" ],
-    cflags: [
-        "-DBORINGSSL_NO_CXX",
-    ],
-    // NOTE: libkeymaster_portable must run unchanged in the trusty runtime environment.
-    // Therefore, it must not link against any c++ stl library. keymaster_stl.cpp
-    // weakly defines the subset of stl symbols required for this library to work
-    // and which are also available in the trusty context.
-    stl: "none",
     host_supported: true,
     export_include_dirs: ["include"],
     target: {

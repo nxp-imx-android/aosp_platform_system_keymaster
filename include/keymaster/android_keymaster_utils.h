@@ -49,6 +49,8 @@
 #define FALLTHROUGH
 #endif
 
+#include <utility>
+
 namespace keymaster {
 
 /**
@@ -433,10 +435,7 @@ template<typename T> struct remove_reference<T&>  {typedef T type;};
 template<typename T> struct remove_reference<T&&> {typedef T type;};
 template<typename T>
 using remove_reference_t = typename remove_reference<T>::type;
-template<typename T>
-remove_reference_t<T>&& move(T&& x) {
-    return static_cast<remove_reference_t<T>&&>(x);
-}
+using std::move;
 
 template<typename T>
 constexpr T&& forward(remove_reference_t<T>& x) {
