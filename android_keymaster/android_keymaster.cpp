@@ -43,9 +43,18 @@
 
 namespace keymaster {
 
-using namespace cppcose;
-
 namespace {
+
+using cppcose::constructCoseEncrypt;
+using cppcose::constructCoseMac0;
+using cppcose::constructCoseSign1;
+using cppcose::CoseKey;
+using cppcose::EC2;
+using cppcose::ES256;
+using cppcose::generateCoseMac0Mac;
+using cppcose::kAesGcmNonceLength;
+using cppcose::P256;
+using cppcose::x25519_HKDF_DeriveKey;
 
 keymaster_error_t CheckVersionInfo(const AuthorizationSet& tee_enforced,
                                    const AuthorizationSet& sw_enforced,
@@ -82,9 +91,10 @@ constexpr int kP256AffinePointSize = 32;
 
 }  // anonymous namespace
 
-AndroidKeymaster::AndroidKeymaster(KeymasterContext* context, size_t operation_table_size)
-    : context_(context), operation_table_(new (std::nothrow) OperationTable(operation_table_size)) {
-}
+AndroidKeymaster::AndroidKeymaster(KeymasterContext* context, size_t operation_table_size,
+                                   uint32_t message_version)
+    : context_(context), operation_table_(new (std::nothrow) OperationTable(operation_table_size)),
+      message_version_(message_version) {}
 
 AndroidKeymaster::~AndroidKeymaster() {}
 
@@ -121,9 +131,13 @@ GetVersion2Response AndroidKeymaster::GetVersion2(const GetVersion2Request& req)
     rsp.km_version = context_->GetKmVersion();
     rsp.km_date = kKmDate;
     rsp.max_message_version = MessageVersion(rsp.km_version, rsp.km_date);
+    rsp.error = KM_ERROR_OK;
 
     // Determine what message version we should use.
     message_version_ = NegotiateMessageVersion(req, rsp);
+
+    LOG_D("GetVersion2 results: %d, %d, %d, %d", rsp.km_version, rsp.km_date,
+          rsp.max_message_version, message_version_);
     return rsp;
 }
 
@@ -347,7 +361,7 @@ void AndroidKeymaster::GenerateRkpKey(const GenerateRkpKeyRequest& request,
 
     auto macedKey =
         constructCoseMac0(request.test_mode ? make_test_mac_key() : rem_prov_ctx->macKey_,
-                          {} /* externalAad */, std::move(cosePublicKey));
+                          {} /* externalAad */, cosePublicKey);
     if (!macedKey) {
         response->error = static_cast<keymaster_error_t>(kStatusFailed);
         return;
@@ -406,8 +420,8 @@ void AndroidKeymaster::GenerateCsr(const GenerateCsrRequest& request,
     std::vector<uint8_t> device_info = device_info_map->encode();
     response->device_info_blob = KeymasterBlob(device_info.data(), device_info.size());
     auto signedMac =
-        constructCoseSign1(std::move(devicePrivKey) /* Signing key */,  //
-                           std::move(ephemeral_mac_key) /* Payload */,
+        constructCoseSign1(devicePrivKey /* Signing key */,  //
+                           ephemeral_mac_key /* Payload */,
                            cppbor::Array() /* AAD */
                                .add(std::pair(request.challenge.begin(),
                                               request.challenge.end() - request.challenge.begin()))

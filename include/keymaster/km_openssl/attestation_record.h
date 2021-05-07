@@ -26,7 +26,7 @@
 
 #include <vector>
 
-#define remove_type_mask(tag) (tag & 0x0FFFFFFF)
+#define remove_type_mask(tag) ((tag)&0x0FFFFFFF)
 
 namespace keymaster {
 
@@ -428,7 +428,7 @@ inline static uint version_to_attestation_version(KmVersion version) {
     case KmVersion::KEYMASTER_4_1:
         return 4;
     case KmVersion::KEYMINT_1:
-        return 5;
+        return 100;
     }
 }
 

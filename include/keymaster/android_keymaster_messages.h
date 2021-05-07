@@ -85,7 +85,7 @@ enum AndroidKeymasterCommand : uint32_t {
  *
  * Assuming both client and server support GetVersion2, the approach is as follows:
  *
- * 1.  Client send GetVersion2Request, containing its maximum message version, c_max.
+ * 1.  Client sends GetVersion2Request, containing its maximum message version, c_max.
  * 2.  Server replies with GetVersion2Response, containing its maximum message version, s_max.
  * 3.  Both sides proceed to create all messages with version min(c_max, s_max).
  *
@@ -101,14 +101,16 @@ enum AndroidKeymasterCommand : uint32_t {
  * GetVersion.  If it received GetVersion, it must assume that the client does not support
  * GetVersion2 and reply that it is version 2.0.0 and use the corresponding message version (3).
  */
+constexpr int32_t kInvalidMessageVersion = -1;
 constexpr int32_t kMaxMessageVersion = 4;
 constexpr int32_t kDefaultMessageVersion = 3;
 
 /**
- * MessageVersion returns the message version for a specified KM version and, possibly KM release
- * date (it's not recommended to change message formats within a KM version, but it could happen).
+ * MessageVersion returns the message version for a specified KM version and, possibly, KM release
+ * date in YYYYMMDD format (it's not recommended to change message formats within a KM version, but
+ * it could happen).
  */
-inline int32_t MessageVersion(KmVersion version, uint32_t /* km_date */) {
+inline constexpr int32_t MessageVersion(KmVersion version, uint32_t /* km_date */ = 0) {
     switch (version) {
     case KmVersion::KEYMASTER_1:
         return 1;
@@ -122,6 +124,7 @@ inline int32_t MessageVersion(KmVersion version, uint32_t /* km_date */) {
     case KmVersion::KEYMINT_1:
         return 4;
     }
+    return kInvalidMessageVersion;
 }
 
 /**
@@ -172,7 +175,7 @@ struct KeymasterResponse : public KeymasterMessage {
 
 // Abstract base for empty requests.
 struct EmptyKeymasterRequest : public KeymasterMessage {
-    EmptyKeymasterRequest(int32_t ver) : KeymasterMessage(ver) {}
+    explicit EmptyKeymasterRequest(int32_t ver) : KeymasterMessage(ver) {}
 
     size_t SerializedSize() const override { return 0; }
     uint8_t* Serialize(uint8_t* buf, const uint8_t*) const override { return buf; }
@@ -181,7 +184,7 @@ struct EmptyKeymasterRequest : public KeymasterMessage {
 
 // Empty response.
 struct EmptyKeymasterResponse : public KeymasterResponse {
-    EmptyKeymasterResponse(int32_t ver) : KeymasterResponse(ver) {}
+    explicit EmptyKeymasterResponse(int32_t ver) : KeymasterResponse(ver) {}
 
     size_t NonErrorSerializedSize() const override { return 0; }
     uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t*) const override { return buf; }
@@ -655,13 +658,14 @@ using DeleteAllKeysResponse = EmptyKeymasterResponse;
 struct GetVersionRequest : public EmptyKeymasterRequest {
     // GetVersionRequest ctor takes a version arg so it has the same signature as others, but the
     // value is ignored because it is not not versionable.
-    GetVersionRequest(uint32_t /* ver */ = 0) : EmptyKeymasterRequest(0 /* not versionable */) {}
+    explicit GetVersionRequest(uint32_t /* ver */ = 0)
+        : EmptyKeymasterRequest(0 /* not versionable */) {}
 };
 
 struct GetVersionResponse : public KeymasterResponse {
     // GetVersionResponse ctor takes a version arg so it has the same signature as others, but the
     // value is ignored because it is not not versionable.
-    GetVersionResponse(uint32_t /* ver */ = 0)
+    explicit GetVersionResponse(uint32_t /* ver */ = 0)
         : KeymasterResponse(0 /* not versionable */), major_ver(0), minor_ver(0), subminor_ver(0) {}
 
     size_t NonErrorSerializedSize() const override;
@@ -1021,7 +1025,7 @@ struct GetVersion2Request : public KeymasterMessage {
         return copy_uint32_from_buf(buf_ptr, end, &max_message_version);
     }
 
-    uint32_t max_message_version;
+    uint32_t max_message_version = kDefaultMessageVersion;
 };
 
 struct GetVersion2Response : public KeymasterResponse {
