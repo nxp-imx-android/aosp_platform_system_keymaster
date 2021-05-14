@@ -529,6 +529,40 @@ TEST(RoundTrip, ConfigureResponse) {
     }
 }
 
+TEST(RoundTrip, ConfigureVendorPatchlevelRequest) {
+    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
+        ConfigureVendorPatchlevelRequest req(ver);
+        req.vendor_patchlevel = 2;
+
+        UniquePtr<ConfigureVendorPatchlevelRequest> deserialized(round_trip(ver, req, 4));
+        EXPECT_EQ(deserialized->vendor_patchlevel, req.vendor_patchlevel);
+    }
+}
+
+TEST(RoundTrip, ConfigureVendorPatchlevelResponse) {
+    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
+        ConfigureVendorPatchlevelResponse rsp(ver);
+        UniquePtr<ConfigureVendorPatchlevelResponse> deserialized(round_trip(ver, rsp, 4));
+    }
+}
+
+TEST(RoundTrip, ConfigureBootPatchlevelRequest) {
+    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
+        ConfigureBootPatchlevelRequest req(ver);
+        req.boot_patchlevel = 2;
+
+        UniquePtr<ConfigureBootPatchlevelRequest> deserialized(round_trip(ver, req, 4));
+        EXPECT_EQ(deserialized->boot_patchlevel, req.boot_patchlevel);
+    }
+}
+
+TEST(RoundTrip, ConfigureBootPatchlevelResponse) {
+    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
+        ConfigureBootPatchlevelResponse rsp(ver);
+        UniquePtr<ConfigureBootPatchlevelResponse> deserialized(round_trip(ver, rsp, 4));
+    }
+}
+
 TEST(RoundTrip, AddEntropyRequest) {
     for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
         AddEntropyRequest msg(ver);

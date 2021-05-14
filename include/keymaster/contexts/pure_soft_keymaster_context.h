@@ -78,6 +78,28 @@ class PureSoftKeymasterContext : public KeymasterContext,
         return &soft_keymaster_enforcement_;
     }
 
+    keymaster_error_t SetVendorPatchlevel(uint32_t vendor_patchlevel) override {
+        if (vendor_patchlevel_.has_value() && vendor_patchlevel != vendor_patchlevel_.value()) {
+            // Can't set patchlevel to a different value.
+            return KM_ERROR_INVALID_ARGUMENT;
+        }
+        vendor_patchlevel_ = vendor_patchlevel;
+        return KM_ERROR_OK;
+    }
+
+    keymaster_error_t SetBootPatchlevel(uint32_t boot_patchlevel) override {
+        if (boot_patchlevel_.has_value() && boot_patchlevel != boot_patchlevel_.value()) {
+            // Can't set patchlevel to a different value.
+            return KM_ERROR_INVALID_ARGUMENT;
+        }
+        boot_patchlevel_ = boot_patchlevel;
+        return KM_ERROR_OK;
+    }
+
+    std::optional<uint32_t> GetVendorPatchlevel() const override { return vendor_patchlevel_; }
+
+    std::optional<uint32_t> GetBootPatchlevel() const override { return boot_patchlevel_; }
+
     /*********************************************************************************************
      * Implement SoftwareKeyBlobMaker
      */
@@ -111,6 +133,8 @@ class PureSoftKeymasterContext : public KeymasterContext,
     std::unique_ptr<KeyFactory> hmac_factory_;
     uint32_t os_version_;
     uint32_t os_patchlevel_;
+    std::optional<uint32_t> vendor_patchlevel_;
+    std::optional<uint32_t> boot_patchlevel_;
     SoftKeymasterEnforcement soft_keymaster_enforcement_;
     keymaster_security_level_t security_level_;
 };

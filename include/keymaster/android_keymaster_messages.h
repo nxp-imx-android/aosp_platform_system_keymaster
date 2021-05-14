@@ -57,6 +57,8 @@ enum AndroidKeymasterCommand : uint32_t {
     IMPORT_WRAPPED_KEY = 25,
     EARLY_BOOT_ENDED = 26,
     DEVICE_LOCKED = 27,
+    CONFIGURE_VENDOR_PATCHLEVEL = 32,
+    CONFIGURE_BOOT_PATCHLEVEL = 33,
 };
 
 /**
@@ -683,7 +685,7 @@ struct ConfigureRequest : public KeymasterMessage {
     }
 
     uint32_t os_version;
-    uint32_t os_patchlevel;
+    uint32_t os_patchlevel;  // YYYYMM
 };
 
 struct ConfigureResponse : public KeymasterResponse {
@@ -932,6 +934,38 @@ struct DeviceLockedRequest : public KeymasterMessage {
     bool passwordOnly;
     VerificationToken token;
 };
+
+struct ConfigureVendorPatchlevelRequest : public KeymasterMessage {
+    explicit ConfigureVendorPatchlevelRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    size_t SerializedSize() const override { return sizeof(vendor_patchlevel); }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        return append_uint32_to_buf(buf, end, vendor_patchlevel);
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_uint32_from_buf(buf_ptr, end, &vendor_patchlevel);
+    }
+
+    uint32_t vendor_patchlevel{};  // YYYYMMDD
+};
+
+using ConfigureVendorPatchlevelResponse = AbortOperationResponse;
+
+struct ConfigureBootPatchlevelRequest : public KeymasterMessage {
+    explicit ConfigureBootPatchlevelRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    size_t SerializedSize() const override { return sizeof(boot_patchlevel); }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        return append_uint32_to_buf(buf, end, boot_patchlevel);
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_uint32_from_buf(buf_ptr, end, &boot_patchlevel);
+    }
+
+    uint32_t boot_patchlevel{};  // YYYYMMDD
+};
+
+using ConfigureBootPatchlevelResponse = AbortOperationResponse;
 
 }  // namespace keymaster
 
