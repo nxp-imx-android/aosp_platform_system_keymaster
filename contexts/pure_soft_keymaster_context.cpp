@@ -48,8 +48,6 @@
 
 #include <keymaster/contexts/soft_attestation_cert.h>
 
-using std::unique_ptr;
-
 namespace keymaster {
 
 PureSoftKeymasterContext::PureSoftKeymasterContext(KmVersion version,
@@ -68,6 +66,7 @@ PureSoftKeymasterContext::PureSoftKeymasterContext(KmVersion version,
     if (security_level != KM_SECURITY_LEVEL_SOFTWARE) {
         pure_soft_secure_key_storage_ = std::make_unique<PureSoftSecureKeyStorage>(64);
     }
+    pure_soft_remote_provisioning_context_ = std::make_unique<PureSoftRemoteProvisioningContext>();
 }
 
 PureSoftKeymasterContext::~PureSoftKeymasterContext() {}
@@ -278,12 +277,12 @@ keymaster_error_t PureSoftKeymasterContext::ParseKeyBlob(const KeymasterKeyBlob&
         DeserializeIntegrityAssuredBlob(blob, hidden, &key_material, &hw_enforced, &sw_enforced);
     if (error != KM_ERROR_INVALID_KEY_BLOB) return constructKey();
 
-    // Wasn't an integrity-assured blob.  Maybe it's an OCB-encrypted blob.
-    error = ParseOcbAuthEncryptedBlob(blob, hidden, &key_material, &hw_enforced, &sw_enforced);
+    // Wasn't an integrity-assured blob.  Maybe it's an auth-encrypted blob.
+    error = ParseAuthEncryptedBlob(blob, hidden, &key_material, &hw_enforced, &sw_enforced);
     if (error == KM_ERROR_OK) LOG_D("Parsed an old keymaster1 software key", 0);
     if (error != KM_ERROR_INVALID_KEY_BLOB) return constructKey();
 
-    // Wasn't an OCB-encrypted blob.  Maybe it's an old softkeymaster blob.
+    // Wasn't an auth-encrypted blob.  Maybe it's an old softkeymaster blob.
     error = ParseOldSoftkeymasterBlob(blob, &key_material, &hw_enforced, &sw_enforced);
     if (error == KM_ERROR_OK) LOG_D("Parsed an old sofkeymaster key", 0);
 
@@ -315,6 +314,10 @@ keymaster_error_t PureSoftKeymasterContext::DeleteAllKeys() const {
 }
 
 keymaster_error_t PureSoftKeymasterContext::AddRngEntropy(const uint8_t* buf, size_t length) const {
+    if (length > 2 * 1024) {
+        // At most 2KiB is allowed to be added at once.
+        return KM_ERROR_INVALID_INPUT_LENGTH;
+    }
     // XXX TODO according to boringssl openssl/rand.h RAND_add is deprecated and does
     // nothing
     RAND_add(buf, length, 0 /* Don't assume any entropy is added to the pool. */);
@@ -514,7 +517,7 @@ keymaster_error_t PureSoftKeymasterContext::UnwrapKey(
                                             wrapped_key_description.data_length)
                              .build();
     if (update_params.is_valid() != AuthorizationSet::Error::OK) {
-        return TranslateAuthorizationSetError(transit_key_authorizations.is_valid());
+        return TranslateAuthorizationSetError(update_params.is_valid());
     }
 
     error = aes_operation->Update(update_params, encrypted_key, &update_outparams, &plaintext,

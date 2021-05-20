@@ -23,7 +23,6 @@
 
 #include <keymaster/UniquePtr.h>
 #include <keymaster/mem.h>
-#include <keymaster/new.h>
 
 namespace keymaster {
 
@@ -204,7 +203,10 @@ class Buffer : public Serializable {
     Buffer(Buffer&& b) { *this = move(b); }
     Buffer(const Buffer&) = delete;
 
-    void operator=(Buffer&& other) {
+    ~Buffer() { Clear(); }
+
+    Buffer& operator=(Buffer&& other) {
+        if (this == &other) return *this;
         buffer_ = move(other.buffer_);
         buffer_size_ = other.buffer_size_;
         other.buffer_size_ = 0;
@@ -212,6 +214,7 @@ class Buffer : public Serializable {
         other.read_position_ = 0;
         write_position_ = other.write_position_;
         other.write_position_ = 0;
+        return *this;
     }
 
     void operator=(const Buffer& other) = delete;

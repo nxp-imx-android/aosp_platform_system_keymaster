@@ -21,7 +21,6 @@
 #include <keymaster/km_openssl/openssl_utils.h>
 #include <keymaster/km_openssl/rsa_key.h>
 #include <keymaster/km_openssl/rsa_operation.h>
-#include <keymaster/new.h>
 
 namespace keymaster {
 
@@ -106,6 +105,8 @@ keymaster_error_t RsaKeyFactory::GenerateKey(const AuthorizationSet& key_descrip
     if (key_description.Contains(TAG_ATTESTATION_CHALLENGE)) {
         *cert_chain = context_.GenerateAttestation(key, key_description, move(attest_key),
                                                    issuer_subject, &error);
+    } else if (attest_key.get() != nullptr) {
+        return KM_ERROR_ATTESTATION_CHALLENGE_MISSING;
     } else {
         bool fake_signature =
             key_size < 1024 || !key_description.Contains(TAG_PURPOSE, KM_PURPOSE_SIGN);
@@ -152,6 +153,8 @@ keymaster_error_t RsaKeyFactory::ImportKey(const AuthorizationSet& key_descripti
     if (key_description.Contains(KM_TAG_ATTESTATION_CHALLENGE)) {
         *cert_chain = context_.GenerateAttestation(key, key_description, move(attest_key),
                                                    issuer_subject, &error);
+    } else if (attest_key.get() != nullptr) {
+        return KM_ERROR_ATTESTATION_CHALLENGE_MISSING;
     } else {
         bool fake_signature =
             key_size < 1024 || !key_description.Contains(TAG_PURPOSE, KM_PURPOSE_SIGN);

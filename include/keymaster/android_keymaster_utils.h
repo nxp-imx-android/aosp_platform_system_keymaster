@@ -23,7 +23,6 @@
 
 #include <keymaster/UniquePtr.h>
 #include <keymaster/mem.h>
-#include <keymaster/new.h>
 #include <keymaster/serializable.h>
 
 #ifndef __has_cpp_attribute
@@ -180,6 +179,8 @@ template <typename BlobType> struct TKeymasterBlob : public BlobType {
     const uint8_t* begin() const { return accessBlobData(this); }
     const uint8_t* end() const { return accessBlobData(this) + accessBlobSize(this); }
 
+    size_t size() const { return accessBlobSize(this); }
+
     void Clear() {
         if (accessBlobSize(this)) {
             memset_s(const_cast<uint8_t*>(accessBlobData(this)), 0, accessBlobSize(this));
@@ -304,7 +305,7 @@ struct CertificateChain : public keymaster_cert_chain_t {
         return retval;
     }
 
-    operator bool() { return entries; }
+    explicit operator bool() { return entries; }
 
     keymaster_blob_t* begin() { return entries; }
     const keymaster_blob_t* begin() const { return entries; }
@@ -313,12 +314,11 @@ struct CertificateChain : public keymaster_cert_chain_t {
 
     // Insert the provided blob at the front of the chain.  CertificateChain takes ownership of the
     // contents of `new_entry`.
-    bool push_front(keymaster_blob_t&& new_entry) {
+    bool push_front(const keymaster_blob_t& new_entry) {
         keymaster_blob_t* new_entries = new keymaster_blob_t[entry_count + 1];
         if (!new_entries) return false;
 
         new_entries[0] = new_entry;
-        new_entry = {};
         for (size_t i = 1; i < entry_count + 1; ++i) {
             new_entries[i] = entries[i - 1];
         }
@@ -350,7 +350,7 @@ struct CertificateChain : public keymaster_cert_chain_t {
 
 // Per RFC 5280 4.1.2.5, an undefined expiration (not-after) field should be set to GeneralizedTime
 // 999912312359559, which is 253402300799000 ms from Jan 1, 1970.
-constexpr uint64_t kUndefinedExpirationDateTime = 253402300799000;
+constexpr int64_t kUndefinedExpirationDateTime = 253402300799000;
 
 // A confirmation token is the output of HMAC-SHA256. */
 constexpr size_t kConfirmationTokenSize = 32;

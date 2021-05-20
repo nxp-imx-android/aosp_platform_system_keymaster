@@ -30,13 +30,21 @@
 
 namespace aidl::android::hardware::security::keymint {
 
-using namespace ::keymaster;
-using namespace km_utils;
+using namespace keymaster;  // NOLINT(google-build-using-namespace)
+
+using km_utils::authToken2AidlVec;
+using km_utils::kmBlob2vector;
+using km_utils::kmError2ScopedAStatus;
+using km_utils::kmParam2Aidl;
+using km_utils::KmParamSet;
+using km_utils::kmParamSet2Aidl;
+using km_utils::legacy_enum_conversion;
 using secureclock::TimeStampToken;
 
 namespace {
 
 vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecurityLevel,
+                                                     const AuthorizationSet& requestParams,
                                                      const AuthorizationSet& sw_enforced,
                                                      const AuthorizationSet& hw_enforced) {
     KeyCharacteristics keyMintEnforced{keyMintSecurityLevel, {}};
@@ -76,8 +84,14 @@ vector<KeyCharacteristics> convertKeyCharacteristics(SecurityLevel keyMintSecuri
         case KM_TAG_TRUSTED_USER_PRESENCE_REQUIRED:
             break;
 
-        /* Unenforceable */
+        /* Keystore-enforced if not locally generated. */
         case KM_TAG_CREATION_DATETIME:
+            // A KeyMaster implementation is required to add this tag to generated/imported keys.
+            // A KeyMint implementation is not required to create this tag, only to echo it back if
+            // it was included in the key generation/import request.
+            if (requestParams.Contains(KM_TAG_CREATION_DATETIME)) {
+                keystoreEnforced.authorizations.push_back(kmParam2Aidl(entry));
+            }
             break;
 
         /* Disallowed in KeyCharacteristics */
@@ -247,8 +261,8 @@ ScopedAStatus AndroidKeyMintDevice::generateKey(const vector<KeyParameter>& keyP
     }
 
     creationResult->keyBlob = kmBlob2vector(response.key_blob);
-    creationResult->keyCharacteristics =
-        convertKeyCharacteristics(securityLevel_, response.unenforced, response.enforced);
+    creationResult->keyCharacteristics = convertKeyCharacteristics(
+        securityLevel_, request.key_description, response.unenforced, response.enforced);
     creationResult->certificateChain = convertCertificateChain(response.certificate_chain);
     return ScopedAStatus::ok();
 }
@@ -278,8 +292,8 @@ ScopedAStatus AndroidKeyMintDevice::importKey(const vector<KeyParameter>& keyPar
     }
 
     creationResult->keyBlob = kmBlob2vector(response.key_blob);
-    creationResult->keyCharacteristics =
-        convertKeyCharacteristics(securityLevel_, response.unenforced, response.enforced);
+    creationResult->keyCharacteristics = convertKeyCharacteristics(
+        securityLevel_, request.key_description, response.unenforced, response.enforced);
     creationResult->certificateChain = convertCertificateChain(response.certificate_chain);
 
     return ScopedAStatus::ok();
@@ -309,8 +323,8 @@ AndroidKeyMintDevice::importWrappedKey(const vector<uint8_t>& wrappedKeyData,   
     }
 
     creationResult->keyBlob = kmBlob2vector(response.key_blob);
-    creationResult->keyCharacteristics =
-        convertKeyCharacteristics(securityLevel_, response.unenforced, response.enforced);
+    creationResult->keyCharacteristics = convertKeyCharacteristics(
+        securityLevel_, request.additional_params, response.unenforced, response.enforced);
     creationResult->certificateChain = convertCertificateChain(response.certificate_chain);
 
     return ScopedAStatus::ok();
@@ -360,7 +374,8 @@ ScopedAStatus AndroidKeyMintDevice::destroyAttestationIds() {
 
 ScopedAStatus AndroidKeyMintDevice::begin(KeyPurpose purpose, const vector<uint8_t>& keyBlob,
                                           const vector<KeyParameter>& params,
-                                          const HardwareAuthToken& authToken, BeginResult* result) {
+                                          const optional<HardwareAuthToken>& authToken,
+                                          BeginResult* result) {
 
     BeginOperationRequest request(impl_->message_version());
     request.purpose = legacy_enum_conversion(purpose);
@@ -409,8 +424,10 @@ AndroidKeyMintDevice::convertStorageKeyToEphemeral(const std::vector<uint8_t>& /
     return kmError2ScopedAStatus(KM_ERROR_UNIMPLEMENTED);
 }
 
-ScopedAStatus AndroidKeyMintDevice::performOperation(const vector<uint8_t>& /* request */,
-                                                     vector<uint8_t>* /* response */) {
+ScopedAStatus AndroidKeyMintDevice::getKeyCharacteristics(
+    const std::vector<uint8_t>& /* storageKeyBlob */, const std::vector<uint8_t>& /* appId */,
+    const std::vector<uint8_t>& /* appData */,
+    std::vector<KeyCharacteristics>* /* keyCharacteristics */) {
     return kmError2ScopedAStatus(KM_ERROR_UNIMPLEMENTED);
 }
 
