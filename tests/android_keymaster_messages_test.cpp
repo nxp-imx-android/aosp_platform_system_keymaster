@@ -47,28 +47,12 @@ Message* round_trip(int32_t ver, const Message& message, size_t expected_size) {
     return deserialized;
 }
 
-struct EmptyKeymasterResponse : public KeymasterResponse {
-    explicit EmptyKeymasterResponse(int32_t ver) : KeymasterResponse(ver) {}
-    size_t NonErrorSerializedSize() const { return 1; }
-    uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t* /* end */) const {
-        *buf++ = 0;
-        return buf;
-    }
-    bool NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) {
-        if (*buf_ptr >= end)
-            return false;
-        EXPECT_EQ(0, **buf_ptr);
-        (*buf_ptr)++;
-        return true;
-    }
-};
-
 TEST(RoundTrip, EmptyKeymasterResponse) {
     for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
         EmptyKeymasterResponse msg(ver);
         msg.error = KM_ERROR_OK;
 
-        UniquePtr<EmptyKeymasterResponse> deserialized(round_trip(ver, msg, 5));
+        UniquePtr<EmptyKeymasterResponse> deserialized(round_trip(ver, msg, 4));
     }
 }
 
@@ -452,24 +436,10 @@ TEST(RoundTrip, DeleteKeyRequest) {
     }
 }
 
-TEST(RoundTrip, DeleteKeyResponse) {
-    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
-        DeleteKeyResponse msg(ver);
-        UniquePtr<DeleteKeyResponse> deserialized(round_trip(ver, msg, 4));
-    }
-}
-
 TEST(RoundTrip, DeleteAllKeysRequest) {
     for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
         DeleteAllKeysRequest msg(ver);
         UniquePtr<DeleteAllKeysRequest> deserialized(round_trip(ver, msg, 0));
-    }
-}
-
-TEST(RoundTrip, DeleteAllKeysResponse) {
-    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
-        DeleteAllKeysResponse msg(ver);
-        UniquePtr<DeleteAllKeysResponse> deserialized(round_trip(ver, msg, 4));
     }
 }
 
@@ -522,13 +492,6 @@ TEST(RoundTrip, ConfigureRequest) {
     }
 }
 
-TEST(RoundTrip, ConfigureResponse) {
-    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
-        ConfigureResponse rsp(ver);
-        UniquePtr<ConfigureResponse> deserialized(round_trip(ver, rsp, 4));
-    }
-}
-
 TEST(RoundTrip, AddEntropyRequest) {
     for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
         AddEntropyRequest msg(ver);
@@ -540,24 +503,10 @@ TEST(RoundTrip, AddEntropyRequest) {
     }
 }
 
-TEST(RoundTrip, AddEntropyResponse) {
-    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
-        AddEntropyResponse msg(ver);
-        UniquePtr<AddEntropyResponse> deserialized(round_trip(ver, msg, 4));
-    }
-}
-
 TEST(RoundTrip, AbortOperationRequest) {
     for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
         AbortOperationRequest msg(ver);
         UniquePtr<AbortOperationRequest> deserialized(round_trip(ver, msg, 8));
-    }
-}
-
-TEST(RoundTrip, AbortOperationResponse) {
-    for (int ver = 0; ver <= MAX_MESSAGE_VERSION; ++ver) {
-        AbortOperationResponse msg(ver);
-        UniquePtr<AbortOperationResponse> deserialized(round_trip(ver, msg, 4));
     }
 }
 
@@ -694,15 +643,12 @@ template <typename Message> void parse_garbage() {
     TEST(GarbageTest, Message) { parse_garbage<Message>(); }
 
 GARBAGE_TEST(AbortOperationRequest);
-GARBAGE_TEST(AbortOperationResponse);
+GARBAGE_TEST(EmptyKeymasterResponse);
 GARBAGE_TEST(AddEntropyRequest);
-GARBAGE_TEST(AddEntropyResponse);
 GARBAGE_TEST(BeginOperationRequest);
 GARBAGE_TEST(BeginOperationResponse);
 GARBAGE_TEST(DeleteAllKeysRequest);
-GARBAGE_TEST(DeleteAllKeysResponse);
 GARBAGE_TEST(DeleteKeyRequest);
-GARBAGE_TEST(DeleteKeyResponse);
 GARBAGE_TEST(ExportKeyRequest);
 GARBAGE_TEST(ExportKeyResponse);
 GARBAGE_TEST(FinishOperationRequest);
