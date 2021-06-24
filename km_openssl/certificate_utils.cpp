@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <openssl/asn1.h>
 #include <openssl/evp.h>
 #include <openssl/x509v3.h>
 
@@ -23,6 +24,7 @@
 #include <keymaster/km_openssl/asymmetric_key.h>
 #include <keymaster/km_openssl/certificate_utils.h>
 #include <keymaster/km_openssl/openssl_err.h>
+#include <keymaster/logger.h>
 
 namespace keymaster {
 
@@ -40,18 +42,16 @@ template <typename T> T&& min(T&& a, T&& b) {
 }
 
 keymaster_error_t fake_sign_cert(X509* cert) {
-    // Set algorithm in TBSCertificate
-    X509_ALGOR_set0(cert->cert_info->signature, OBJ_nid2obj(NID_sha256WithRSAEncryption),
-                    V_ASN1_NULL, nullptr);
-
-    // Set algorithm in Certificate
-    X509_ALGOR_set0(cert->sig_alg, OBJ_nid2obj(NID_sha256WithRSAEncryption), V_ASN1_NULL, nullptr);
+    X509_ALGOR_Ptr algor(X509_ALGOR_new());
+    if (!algor.get()) {
+        return TranslateLastOpenSslError();
+    }
+    X509_ALGOR_set0(algor.get(), OBJ_nid2obj(NID_sha256WithRSAEncryption), V_ASN1_NULL, nullptr);
 
     // Set signature to a bit string containing a single byte, value 0.
     uint8_t fake_sig = 0;
-    if (!cert->signature) cert->signature = ASN1_BIT_STRING_new();
-    if (!cert->signature) return KM_ERROR_MEMORY_ALLOCATION_FAILED;
-    if (!ASN1_STRING_set(cert->signature, &fake_sig, sizeof(fake_sig))) {
+    if (!X509_set1_signature_algo(cert, algor.get()) ||
+        !X509_set1_signature_value(cert, &fake_sig, sizeof(fake_sig))) {
         return TranslateLastOpenSslError();
     }
 
@@ -124,20 +124,49 @@ keymaster_error_t get_certificate_params(const AuthorizationSet& caller_params,
     }
     cert_params->serial = move(serial);
 
-    if (!caller_params.GetTagValue(TAG_CERTIFICATE_NOT_BEFORE, &cert_params->active_date_time)) {
-        if (kmVersion >= KmVersion::KEYMINT_1) return KM_ERROR_MISSING_NOT_BEFORE;
-        cert_params->active_date_time = 0;
+    cert_params->active_date_time = 0;
+    cert_params->expire_date_time = kUndefinedExpirationDateTime;
+
+    uint64_t tmp;
+    switch (kmVersion) {
+    case KmVersion::KEYMASTER_1:
+    case KmVersion::KEYMASTER_1_1:
+    case KmVersion::KEYMASTER_2:
+    case KmVersion::KEYMASTER_3:
+    case KmVersion::KEYMASTER_4:
+    case KmVersion::KEYMASTER_4_1:
+        if (caller_params.GetTagValue(TAG_ACTIVE_DATETIME, &tmp)) {
+            LOG_D("Using TAG_ACTIVE_DATETIME: %lu", tmp);
+            cert_params->active_date_time = static_cast<int64_t>(tmp);
+        }
+        if (caller_params.GetTagValue(TAG_ORIGINATION_EXPIRE_DATETIME, &tmp)) {
+            LOG_D("Using TAG_ORIGINATION_EXPIRE_DATETIME: %lu", tmp);
+            cert_params->expire_date_time = static_cast<int64_t>(tmp);
+        }
+        break;
+
+    case KmVersion::KEYMINT_1:
+        if (!caller_params.GetTagValue(TAG_CERTIFICATE_NOT_BEFORE, &tmp)) {
+            return KM_ERROR_MISSING_NOT_BEFORE;
+        }
+        LOG_D("Using TAG_CERTIFICATE_NOT_BEFORE: %lu", tmp);
+        cert_params->active_date_time = static_cast<int64_t>(tmp);
+
+        if (!caller_params.GetTagValue(TAG_CERTIFICATE_NOT_AFTER, &tmp)) {
+            return KM_ERROR_MISSING_NOT_AFTER;
+        }
+        LOG_D("Using TAG_CERTIFICATE_NOT_AFTER: %lu", tmp);
+        cert_params->expire_date_time = static_cast<int64_t>(tmp);
     }
 
-    if (!caller_params.GetTagValue(TAG_CERTIFICATE_NOT_AFTER, &cert_params->expire_date_time)) {
-        if (kmVersion >= KmVersion::KEYMINT_1) return KM_ERROR_MISSING_NOT_AFTER;
-        cert_params->expire_date_time = kUndefinedExpirationDateTime;
-    }
+    LOG_D("Got certificate date params:  NotBefore = %ld, NotAfter = %ld",
+          cert_params->active_date_time, cert_params->expire_date_time);
 
     keymaster_blob_t subject{};
     if (caller_params.GetTagValue(TAG_CERTIFICATE_SUBJECT, &subject) && subject.data_length) {
         return make_name_from_der(subject, &cert_params->subject_name);
     }
+
     return make_name_from_str(kDefaultSubject, &cert_params->subject_name);
 }
 
@@ -228,7 +257,7 @@ keymaster_error_t make_cert_rump(const X509_NAME* issuer,
     // Set the certificate serialNumber
     ASN1_INTEGER_Ptr serial_number(ASN1_INTEGER_new());
     if (!serial_number.get() ||  //
-        !ASN1_INTEGER_set(serial_number.get(), cert_params.serial) ||
+        !BN_to_ASN1_INTEGER(cert_params.serial.get(), serial_number.get()) ||
         !X509_set_serialNumber(certificate.get(),
                                serial_number.get() /* Don't release; copied */)) {
         return TranslateLastOpenSslError();
@@ -245,6 +274,7 @@ keymaster_error_t make_cert_rump(const X509_NAME* issuer,
 
     // Set activation date.
     ASN1_TIME_Ptr notBefore(ASN1_TIME_new());
+    LOG_D("Setting notBefore to %ld: ", cert_params.active_date_time / 1000);
     time_t notBeforeTime = static_cast<time_t>(cert_params.active_date_time / 1000);
     if (!notBefore.get() || !ASN1_TIME_set(notBefore.get(), notBeforeTime) ||
         !X509_set_notBefore(certificate.get(), notBefore.get() /* Don't release; copied */)) {
@@ -253,6 +283,7 @@ keymaster_error_t make_cert_rump(const X509_NAME* issuer,
 
     // Set expiration date.
     ASN1_TIME_Ptr notAfter(ASN1_TIME_new());
+    LOG_D("Setting notAfter to %ld: ", cert_params.expire_date_time / 1000);
     time_t notAfterTime = static_cast<time_t>(cert_params.expire_date_time / 1000);
 
     if (!notAfter.get() || !ASN1_TIME_set(notAfter.get(), notAfterTime) ||

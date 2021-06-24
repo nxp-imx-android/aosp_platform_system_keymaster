@@ -16,8 +16,6 @@
 
 #pragma once
 
-#include <log/log.h>
-
 #include <aidl/android/hardware/security/keymint/Certificate.h>
 #include <aidl/android/hardware/security/keymint/HardwareAuthToken.h>
 #include <aidl/android/hardware/security/keymint/HardwareAuthenticatorType.h>
@@ -119,7 +117,7 @@ inline OutIter copy_bytes_to_iterator(const T& value, OutIter dest) {
     return std::copy(value_ptr, value_ptr + sizeof(value), dest);
 }
 
-vector<uint8_t> authToken2AidlVec(const HardwareAuthToken& token);
+vector<uint8_t> authToken2AidlVec(const std::optional<HardwareAuthToken>& token);
 
 inline void addClientAndAppData(const vector<uint8_t>& clientId, const vector<uint8_t>& appData,
                                 ::keymaster::AuthorizationSet* params) {

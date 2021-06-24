@@ -65,6 +65,7 @@ DEFINE_OPENSSL_OBJECT_POINTER(EVP_PKEY_CTX)
 DEFINE_OPENSSL_OBJECT_POINTER(PKCS8_PRIV_KEY_INFO)
 DEFINE_OPENSSL_OBJECT_POINTER(RSA)
 DEFINE_OPENSSL_OBJECT_POINTER(X509)
+DEFINE_OPENSSL_OBJECT_POINTER(X509_ALGOR)
 DEFINE_OPENSSL_OBJECT_POINTER(X509_EXTENSION)
 DEFINE_OPENSSL_OBJECT_POINTER(X509_NAME)
 
@@ -94,6 +95,9 @@ keymaster_error_t KeyMaterialToEvpKey(keymaster_key_format_t key_format,
                                       UniquePtr<EVP_PKEY, EVP_PKEY_Delete>* evp_pkey);
 
 keymaster_error_t EvpKeyToKeyMaterial(const EVP_PKEY* evp_pkey, KeymasterKeyBlob* key_blob);
+
+keymaster_error_t GetEcdsa256KeyFromCert(const keymaster_blob_t* km_cert, uint8_t* x_coord,
+                                         size_t x_length, uint8_t* y_coord, size_t y_length);
 
 size_t ec_group_size_bits(EC_KEY* ec_key);
 

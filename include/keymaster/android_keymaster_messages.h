@@ -58,6 +58,9 @@ enum AndroidKeymasterCommand : uint32_t {
     EARLY_BOOT_ENDED = 26,
     DEVICE_LOCKED = 27,
     GET_VERSION_2 = 28,
+    GENERATE_RKP_KEY = 29,
+    GENERATE_CSR = 30,
+    GENERATE_TIMESTAMP_TOKEN = 31,
 };
 
 /**
@@ -82,7 +85,7 @@ enum AndroidKeymasterCommand : uint32_t {
  *
  * Assuming both client and server support GetVersion2, the approach is as follows:
  *
- * 1.  Client send GetVersion2Request, containing its maximum message version, c_max.
+ * 1.  Client sends GetVersion2Request, containing its maximum message version, c_max.
  * 2.  Server replies with GetVersion2Response, containing its maximum message version, s_max.
  * 3.  Both sides proceed to create all messages with version min(c_max, s_max).
  *
@@ -98,14 +101,16 @@ enum AndroidKeymasterCommand : uint32_t {
  * GetVersion.  If it received GetVersion, it must assume that the client does not support
  * GetVersion2 and reply that it is version 2.0.0 and use the corresponding message version (3).
  */
+constexpr int32_t kInvalidMessageVersion = -1;
 constexpr int32_t kMaxMessageVersion = 4;
 constexpr int32_t kDefaultMessageVersion = 3;
 
 /**
- * MessageVersion returns the message version for a specified KM version and, possibly KM release
- * date (it's not recommended to change message formats within a KM version, but it could happen).
+ * MessageVersion returns the message version for a specified KM version and, possibly, KM release
+ * date in YYYYMMDD format (it's not recommended to change message formats within a KM version, but
+ * it could happen).
  */
-inline int32_t MessageVersion(KmVersion version, uint32_t /* km_date */) {
+inline constexpr int32_t MessageVersion(KmVersion version, uint32_t /* km_date */ = 0) {
     switch (version) {
     case KmVersion::KEYMASTER_1:
         return 1;
@@ -119,6 +124,7 @@ inline int32_t MessageVersion(KmVersion version, uint32_t /* km_date */) {
     case KmVersion::KEYMINT_1:
         return 4;
     }
+    return kInvalidMessageVersion;
 }
 
 /**
@@ -169,7 +175,7 @@ struct KeymasterResponse : public KeymasterMessage {
 
 // Abstract base for empty requests.
 struct EmptyKeymasterRequest : public KeymasterMessage {
-    EmptyKeymasterRequest(int32_t ver) : KeymasterMessage(ver) {}
+    explicit EmptyKeymasterRequest(int32_t ver) : KeymasterMessage(ver) {}
 
     size_t SerializedSize() const override { return 0; }
     uint8_t* Serialize(uint8_t* buf, const uint8_t*) const override { return buf; }
@@ -178,7 +184,7 @@ struct EmptyKeymasterRequest : public KeymasterMessage {
 
 // Empty response.
 struct EmptyKeymasterResponse : public KeymasterResponse {
-    EmptyKeymasterResponse(int32_t ver) : KeymasterResponse(ver) {}
+    explicit EmptyKeymasterResponse(int32_t ver) : KeymasterResponse(ver) {}
 
     size_t NonErrorSerializedSize() const override { return 0; }
     uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t*) const override { return buf; }
@@ -354,6 +360,62 @@ struct GenerateKeyResponse : public KeymasterResponse {
     AuthorizationSet enforced;
     AuthorizationSet unenforced;
     CertificateChain certificate_chain;
+};
+
+struct GenerateRkpKeyRequest : KeymasterMessage {
+    explicit GenerateRkpKeyRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    size_t SerializedSize() const override { return sizeof(uint8_t); }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        return append_to_buf(buf, end, &test_mode, sizeof(uint8_t));
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_from_buf(buf_ptr, end, &test_mode, sizeof(uint8_t));
+    }
+
+    bool test_mode = false;
+};
+
+struct GenerateRkpKeyResponse : public KeymasterResponse {
+    explicit GenerateRkpKeyResponse(int32_t ver) : KeymasterResponse(ver) {}
+
+    size_t NonErrorSerializedSize() const override;
+    uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t* end) const override;
+    bool NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) override;
+
+    KeymasterKeyBlob key_blob;
+    KeymasterBlob maced_public_key;
+};
+
+struct GenerateCsrRequest : public KeymasterMessage {
+    explicit GenerateCsrRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    ~GenerateCsrRequest() override { delete[] keys_to_sign_array; }
+
+    size_t SerializedSize() const override;
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override;
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override;
+    void SetKeyToSign(uint32_t index, const void* data, size_t length);
+    void SetEndpointEncCertChain(const void* data, size_t length);
+    void SetChallenge(const void* data, size_t length);
+
+    bool test_mode = false;
+    size_t num_keys = 0;
+    KeymasterBlob* keys_to_sign_array;
+    KeymasterBlob endpoint_enc_cert_chain;
+    KeymasterBlob challenge;
+};
+
+struct GenerateCsrResponse : public KeymasterResponse {
+    explicit GenerateCsrResponse(int32_t ver) : KeymasterResponse(ver) {}
+
+    size_t NonErrorSerializedSize() const override;
+    uint8_t* NonErrorSerialize(uint8_t* buf, const uint8_t* end) const override;
+    bool NonErrorDeserialize(const uint8_t** buf_ptr, const uint8_t* end) override;
+
+    KeymasterBlob keys_to_sign_mac;
+    KeymasterBlob device_info_blob;
+    KeymasterBlob protected_data_blob;
 };
 
 struct GetKeyCharacteristicsRequest : public KeymasterMessage {
@@ -596,13 +658,14 @@ using DeleteAllKeysResponse = EmptyKeymasterResponse;
 struct GetVersionRequest : public EmptyKeymasterRequest {
     // GetVersionRequest ctor takes a version arg so it has the same signature as others, but the
     // value is ignored because it is not not versionable.
-    GetVersionRequest(uint32_t /* ver */ = 0) : EmptyKeymasterRequest(0 /* not versionable */) {}
+    explicit GetVersionRequest(uint32_t /* ver */ = 0)
+        : EmptyKeymasterRequest(0 /* not versionable */) {}
 };
 
 struct GetVersionResponse : public KeymasterResponse {
     // GetVersionResponse ctor takes a version arg so it has the same signature as others, but the
     // value is ignored because it is not not versionable.
-    GetVersionResponse(uint32_t /* ver */ = 0)
+    explicit GetVersionResponse(uint32_t /* ver */ = 0)
         : KeymasterResponse(0 /* not versionable */), major_ver(0), minor_ver(0), subminor_ver(0) {}
 
     size_t NonErrorSerializedSize() const override;
@@ -962,7 +1025,7 @@ struct GetVersion2Request : public KeymasterMessage {
         return copy_uint32_from_buf(buf_ptr, end, &max_message_version);
     }
 
-    uint32_t max_message_version;
+    uint32_t max_message_version = kDefaultMessageVersion;
 };
 
 struct GetVersion2Response : public KeymasterResponse {
@@ -1032,5 +1095,52 @@ struct GenerateTimestampTokenResponse : public KeymasterResponse {
     }
     TimestampToken token;
 };
+
+struct SetAttestationIdsRequest : public KeymasterMessage {
+    explicit SetAttestationIdsRequest(int32_t ver) : KeymasterMessage(ver) {}
+    size_t SerializedSize() const override {
+        return brand.SerializedSize()           //
+               + device.SerializedSize()        //
+               + product.SerializedSize()       //
+               + serial.SerializedSize()        //
+               + imei.SerializedSize()          //
+               + meid.SerializedSize()          //
+               + manufacturer.SerializedSize()  //
+               + model.SerializedSize();
+    }
+
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        buf = brand.Serialize(buf, end);
+        buf = device.Serialize(buf, end);
+        buf = product.Serialize(buf, end);
+        buf = serial.Serialize(buf, end);
+        buf = imei.Serialize(buf, end);
+        buf = meid.Serialize(buf, end);
+        buf = manufacturer.Serialize(buf, end);
+        return model.Serialize(buf, end);
+    }
+
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return brand.Deserialize(buf_ptr, end)            //
+               && device.Deserialize(buf_ptr, end)        //
+               && product.Deserialize(buf_ptr, end)       //
+               && serial.Deserialize(buf_ptr, end)        //
+               && imei.Deserialize(buf_ptr, end)          //
+               && meid.Deserialize(buf_ptr, end)          //
+               && manufacturer.Deserialize(buf_ptr, end)  //
+               && model.Deserialize(buf_ptr, end);        //
+    }
+
+    Buffer brand;
+    Buffer device;
+    Buffer product;
+    Buffer serial;
+    Buffer imei;
+    Buffer meid;
+    Buffer manufacturer;
+    Buffer model;
+};
+
+using SetAttestationIdsResponse = EmptyKeymasterResponse;
 
 }  // namespace keymaster
