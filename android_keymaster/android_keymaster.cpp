@@ -87,7 +87,7 @@ cppcose::HmacSha256Function getMacFunction(bool test_mode,
                                            RemoteProvisioningContext* rem_prov_ctx) {
     if (test_mode) {
         return [](const cppcose::bytevec& input) {
-            const cppcose::bytevec macKey{32};
+            const cppcose::bytevec macKey(32);
             return cppcose::generateHmacSha256(macKey, input);
         };
     }
@@ -424,7 +424,13 @@ void AndroidKeymaster::GenerateCsr(const GenerateCsrRequest& request,
         std::tie(devicePrivKey, bcc) = rem_prov_ctx->GenerateBcc();
     } else {
         devicePrivKey = rem_prov_ctx->devicePrivKey_;
-        bcc = rem_prov_ctx->bcc_.clone();
+        auto clone = rem_prov_ctx->bcc_.clone();
+        if (!clone->asArray()) {
+            LOG_E("The BCC is not an array.", 0);
+            response->error = static_cast<keymaster_error_t>(kStatusFailed);
+            return;
+        }
+        bcc = std::move(*clone->asArray());
     }
     std::unique_ptr<cppbor::Map> device_info_map = rem_prov_ctx->CreateDeviceInfo();
     std::vector<uint8_t> device_info = device_info_map->encode();
@@ -436,6 +442,7 @@ void AndroidKeymaster::GenerateCsr(const GenerateCsrRequest& request,
                                .add(std::pair(request.challenge.begin(),
                                               request.challenge.end() - request.challenge.begin()))
                                .add(std::move(device_info_map))
+                               .add(std::pair(pubKeysToSignMac->data(), pubKeysToSignMac->size()))
                                .encode());
     if (!signedMac) {
         LOG_E("Failed to construct COSE_Sign1 over the ephemeral mac key.", 0);
