@@ -421,10 +421,16 @@ void AndroidKeymaster::GenerateCsr(const GenerateCsrRequest& request,
     std::vector<uint8_t> devicePrivKey;
     cppbor::Array bcc;
     if (request.test_mode) {
-        std::tie(devicePrivKey, bcc) = rem_prov_ctx->GenerateBcc();
+        std::tie(devicePrivKey, bcc) = rem_prov_ctx->GenerateBcc(/*testMode=*/true);
     } else {
         devicePrivKey = rem_prov_ctx->devicePrivKey_;
-        bcc = rem_prov_ctx->bcc_.clone();
+        auto clone = rem_prov_ctx->bcc_.clone();
+        if (!clone->asArray()) {
+            LOG_E("The BCC is not an array.", 0);
+            response->error = static_cast<keymaster_error_t>(kStatusFailed);
+            return;
+        }
+        bcc = std::move(*clone->asArray());
     }
     std::unique_ptr<cppbor::Map> device_info_map = rem_prov_ctx->CreateDeviceInfo();
     std::vector<uint8_t> device_info = device_info_map->encode();
