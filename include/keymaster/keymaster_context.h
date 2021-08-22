@@ -17,6 +17,8 @@
 #ifndef SYSTEM_KEYMASTER_KEYMASTER_CONTEXT_H_
 #define SYSTEM_KEYMASTER_KEYMASTER_CONTEXT_H_
 
+#include <optional>
+
 #include <assert.h>
 
 #include <hardware/keymaster_defs.h>
@@ -31,6 +33,7 @@ namespace keymaster {
 class AuthorizationSet;
 class KeyFactory;
 class OperationFactory;
+class SecureDeletionSecretStorage;
 template <typename BlobType> struct TKeymasterBlob;
 typedef TKeymasterBlob<keymaster_key_blob_t> KeymasterKeyBlob;
 class Key;
@@ -187,6 +190,14 @@ class KeymasterContext {
     virtual SecureKeyStorage* secure_key_storage() { return nullptr; }
 
     /**
+     * Return the secure deletion secret storage for this context, or null if none is available.
+     *
+     * Note that SecureDeletionSecretStorage obsoletes SecureKeyStorage (see method above).  The
+     * latter will be removed in the future.
+     */
+    virtual SecureDeletionSecretStorage* secure_deletion_secret_storage() { return nullptr; }
+
+    /**
      * Checks that the data in |input_data| of size |input_data_size| matches the
      * confirmation token given by |confirmation_token|.
      *
@@ -212,6 +223,36 @@ class KeymasterContext {
      * supported.
      */
     virtual RemoteProvisioningContext* GetRemoteProvisioningContext() const { return nullptr; }
+
+    /**
+     * Sets the vendor patchlevel (format YYYYMMDD) for the implementation. This value should
+     * be set by the HAL service at start of day.  A subsequent attempt to set a different
+     * value will return KM_ERROR_INVALID_ARGUMENT.
+     */
+    virtual keymaster_error_t SetVendorPatchlevel(uint32_t /* vendor_patchlevel */) {
+        return KM_ERROR_UNIMPLEMENTED;
+    }
+
+    /**
+     * Sets the boot patchlevel (format YYYYMMDD) for the implementation. This value should be set
+     * by the bootloader.  A subsequent to set a different value will return
+     * KM_ERROR_INVALID_ARGUMENT;
+     */
+    virtual keymaster_error_t SetBootPatchlevel(uint32_t /* boot_patchlevel */) {
+        return KM_ERROR_UNIMPLEMENTED;
+    }
+
+    /**
+     * Returns the vendor patchlevel, as set by the HAL service using SetVendorPatchlevel.
+     */
+    virtual std::optional<uint32_t> GetVendorPatchlevel() const { return std::nullopt; }
+
+    /**
+     * Returns the boot patchlevel. For hardware-based implementations this will be the value set by
+     * the bootloader. For software implementations this will be the information set by
+     * SetBootPatchLevel.
+     */
+    virtual std::optional<uint32_t> GetBootPatchlevel() const { return std::nullopt; }
 
   private:
     // Uncopyable.

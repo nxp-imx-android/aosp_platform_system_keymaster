@@ -53,12 +53,22 @@ ErrMsgOr<bssl::UniquePtr<EVP_CIPHER_CTX>> aesGcmInitAndProcessAad(const bytevec&
 
 }  // namespace
 
-ErrMsgOr<bytevec> generateCoseMac0Mac(const bytevec& macKey, const bytevec& externalAad,
-                                      const bytevec& payload) {
-    if (macKey.empty()) {
-        return "Empty MAC key";
-    }
+ErrMsgOr<HmacSha256> generateHmacSha256(const bytevec& key, const bytevec& data) {
+    HmacSha256 digest;
+    unsigned int outLen;
+    uint8_t* out = HMAC(EVP_sha256(),              //
+                        key.data(), key.size(),    //
+                        data.data(), data.size(),  //
+                        digest.data(), &outLen);
 
+    if (out == nullptr || outLen != digest.size()) {
+        return "Error generating HMAC";
+    }
+    return digest;
+}
+
+ErrMsgOr<HmacSha256> generateCoseMac0Mac(HmacSha256Function macFunction, const bytevec& externalAad,
+                                         const bytevec& payload) {
     auto macStructure = cppbor::Array()
                             .add("MAC0")
                             .add(cppbor::Map().add(ALGORITHM, HMAC_256).canonicalize().encode())
@@ -66,32 +76,24 @@ ErrMsgOr<bytevec> generateCoseMac0Mac(const bytevec& macKey, const bytevec& exte
                             .add(payload)
                             .encode();
 
-    bytevec macTag(SHA256_DIGEST_LENGTH);
-    uint8_t* out = macTag.data();
-    unsigned int outLen;
-    out = HMAC(EVP_sha256(),                              //
-               macKey.data(), macKey.size(),              //
-               macStructure.data(), macStructure.size(),  //
-               out, &outLen);
-
-    assert(out != nullptr && outLen == macTag.size());
-    if (out == nullptr || outLen != macTag.size()) {
+    auto macTag = macFunction(macStructure);
+    if (!macTag) {
         return "Error computing public key MAC";
     }
 
-    return macTag;
+    return *macTag;
 }
 
-ErrMsgOr<cppbor::Array> constructCoseMac0(const bytevec& macKey, const bytevec& externalAad,
-                                          const bytevec& payload) {
-    auto tag = generateCoseMac0Mac(macKey, externalAad, payload);
+ErrMsgOr<cppbor::Array> constructCoseMac0(HmacSha256Function macFunction,
+                                          const bytevec& externalAad, const bytevec& payload) {
+    auto tag = generateCoseMac0Mac(macFunction, externalAad, payload);
     if (!tag) return tag.moveMessage();
 
     return cppbor::Array()
         .add(cppbor::Map().add(ALGORITHM, HMAC_256).canonicalize().encode())
         .add(cppbor::Map() /* unprotected */)
         .add(payload)
-        .add(tag.moveValue());
+        .add(std::pair(tag->begin(), tag->end()));
 }
 
 ErrMsgOr<bytevec /* payload */> verifyAndParseCoseMac0(const cppbor::Item* macItem,
@@ -118,7 +120,10 @@ ErrMsgOr<bytevec /* payload */> verifyAndParseCoseMac0(const cppbor::Item* macIt
         return "Unsupported Mac0 algorithm";
     }
 
-    auto macTag = generateCoseMac0Mac(macKey, {} /* external_aad */, payload->value());
+    auto macFunction = [&macKey](const bytevec& input) {
+        return generateHmacSha256(macKey, input);
+    };
+    auto macTag = generateCoseMac0Mac(macFunction, {} /* external_aad */, payload->value());
     if (!macTag) return macTag.moveMessage();
 
     if (macTag->size() != tag->value().size() ||
@@ -165,7 +170,7 @@ ErrMsgOr<cppbor::Array> constructCoseSign1(const bytevec& key, const bytevec& pa
     return constructCoseSign1(key, {} /* protectedParams */, payload, aad);
 }
 
-ErrMsgOr<bytevec> verifyAndParseCoseSign1(bool ignoreSignature, const cppbor::Array* coseSign1,
+ErrMsgOr<bytevec> verifyAndParseCoseSign1(const cppbor::Array* coseSign1,
                                           const bytevec& signingCoseKey, const bytevec& aad) {
     if (!coseSign1 || coseSign1->size() != kCoseSign1EntryCount) {
         return "Invalid COSE_Sign1";
@@ -192,25 +197,23 @@ ErrMsgOr<bytevec> verifyAndParseCoseSign1(bool ignoreSignature, const cppbor::Ar
         return "Unsupported signature algorithm";
     }
 
-    if (!ignoreSignature) {
-        const cppbor::Bstr* signature = coseSign1->get(kCoseSign1Signature)->asBstr();
-        if (!signature || signature->value().empty()) {
-            return "Missing signature input";
-        }
+    const cppbor::Bstr* signature = coseSign1->get(kCoseSign1Signature)->asBstr();
+    if (!signature || signature->value().empty()) {
+        return "Missing signature input";
+    }
 
-        bool selfSigned = signingCoseKey.empty();
-        auto key = CoseKey::parseEd25519(selfSigned ? payload->value() : signingCoseKey);
-        if (!key || key->getBstrValue(CoseKey::PUBKEY_X)->empty()) {
-            return "Bad signing key: " + key.moveMessage();
-        }
+    bool selfSigned = signingCoseKey.empty();
+    auto key = CoseKey::parseEd25519(selfSigned ? payload->value() : signingCoseKey);
+    if (!key || key->getBstrValue(CoseKey::PUBKEY_X)->empty()) {
+        return "Bad signing key: " + key.moveMessage();
+    }
 
-        bytevec signatureInput =
-            cppbor::Array().add("Signature1").add(*protectedParams).add(aad).add(*payload).encode();
+    bytevec signatureInput =
+        cppbor::Array().add("Signature1").add(*protectedParams).add(aad).add(*payload).encode();
 
-        if (!ED25519_verify(signatureInput.data(), signatureInput.size(), signature->value().data(),
-                            key->getBstrValue(CoseKey::PUBKEY_X)->data())) {
-            return "Signature verification failed";
-        }
+    if (!ED25519_verify(signatureInput.data(), signatureInput.size(), signature->value().data(),
+                        key->getBstrValue(CoseKey::PUBKEY_X)->data())) {
+        return "Signature verification failed";
     }
 
     return payload->value();
@@ -414,7 +417,7 @@ ErrMsgOr<bytevec> aesGcmEncrypt(const bytevec& key, const bytevec& nonce, const 
                           plaintext.size())) {
         return "Failed to encrypt plaintext";
     }
-    assert(plaintext.size() == outlen);
+    assert(plaintext.size() == static_cast<uint64_t>(outlen));
 
     if (!EVP_CipherFinal_ex(ctx->get(), ciphertext.data() + outlen, &outlen)) {
         return "Failed to finalize encryption";
@@ -442,7 +445,7 @@ ErrMsgOr<bytevec> aesGcmDecrypt(const bytevec& key, const bytevec& nonce, const 
                           ciphertextWithTag.size() - kAesGcmTagSize)) {
         return "Failed to decrypt plaintext";
     }
-    assert(plaintext.size() == outlen);
+    assert(plaintext.size() == static_cast<uint64_t>(outlen));
 
     bytevec tag(ciphertextWithTag.end() - kAesGcmTagSize, ciphertextWithTag.end());
     if (!EVP_CIPHER_CTX_ctrl(ctx->get(), EVP_CTRL_GCM_SET_TAG, kAesGcmTagSize, tag.data())) {

@@ -61,6 +61,8 @@ enum AndroidKeymasterCommand : uint32_t {
     GENERATE_RKP_KEY = 29,
     GENERATE_CSR = 30,
     GENERATE_TIMESTAMP_TOKEN = 31,
+    CONFIGURE_VENDOR_PATCHLEVEL = 32,
+    CONFIGURE_BOOT_PATCHLEVEL = 33,
 };
 
 /**
@@ -751,7 +753,7 @@ struct ConfigureRequest : public KeymasterMessage {
     }
 
     uint32_t os_version;
-    uint32_t os_patchlevel;
+    uint32_t os_patchlevel;  // YYYYMM
 };
 
 using ConfigureResponse = EmptyKeymasterResponse;
@@ -1095,5 +1097,84 @@ struct GenerateTimestampTokenResponse : public KeymasterResponse {
     }
     TimestampToken token;
 };
+
+struct SetAttestationIdsRequest : public KeymasterMessage {
+    explicit SetAttestationIdsRequest(int32_t ver) : KeymasterMessage(ver) {}
+    size_t SerializedSize() const override {
+        return brand.SerializedSize()           //
+               + device.SerializedSize()        //
+               + product.SerializedSize()       //
+               + serial.SerializedSize()        //
+               + imei.SerializedSize()          //
+               + meid.SerializedSize()          //
+               + manufacturer.SerializedSize()  //
+               + model.SerializedSize();
+    }
+
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        buf = brand.Serialize(buf, end);
+        buf = device.Serialize(buf, end);
+        buf = product.Serialize(buf, end);
+        buf = serial.Serialize(buf, end);
+        buf = imei.Serialize(buf, end);
+        buf = meid.Serialize(buf, end);
+        buf = manufacturer.Serialize(buf, end);
+        return model.Serialize(buf, end);
+    }
+
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return brand.Deserialize(buf_ptr, end)            //
+               && device.Deserialize(buf_ptr, end)        //
+               && product.Deserialize(buf_ptr, end)       //
+               && serial.Deserialize(buf_ptr, end)        //
+               && imei.Deserialize(buf_ptr, end)          //
+               && meid.Deserialize(buf_ptr, end)          //
+               && manufacturer.Deserialize(buf_ptr, end)  //
+               && model.Deserialize(buf_ptr, end);        //
+    }
+
+    Buffer brand;
+    Buffer device;
+    Buffer product;
+    Buffer serial;
+    Buffer imei;
+    Buffer meid;
+    Buffer manufacturer;
+    Buffer model;
+};
+
+using SetAttestationIdsResponse = EmptyKeymasterResponse;
+
+struct ConfigureVendorPatchlevelRequest : public KeymasterMessage {
+    explicit ConfigureVendorPatchlevelRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    size_t SerializedSize() const override { return sizeof(vendor_patchlevel); }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        return append_uint32_to_buf(buf, end, vendor_patchlevel);
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_uint32_from_buf(buf_ptr, end, &vendor_patchlevel);
+    }
+
+    uint32_t vendor_patchlevel{};  // YYYYMMDD
+};
+
+using ConfigureVendorPatchlevelResponse = EmptyKeymasterResponse;
+
+struct ConfigureBootPatchlevelRequest : public KeymasterMessage {
+    explicit ConfigureBootPatchlevelRequest(int32_t ver) : KeymasterMessage(ver) {}
+
+    size_t SerializedSize() const override { return sizeof(boot_patchlevel); }
+    uint8_t* Serialize(uint8_t* buf, const uint8_t* end) const override {
+        return append_uint32_to_buf(buf, end, boot_patchlevel);
+    }
+    bool Deserialize(const uint8_t** buf_ptr, const uint8_t* end) override {
+        return copy_uint32_from_buf(buf_ptr, end, &boot_patchlevel);
+    }
+
+    uint32_t boot_patchlevel{};  // YYYYMMDD
+};
+
+using ConfigureBootPatchlevelResponse = EmptyKeymasterResponse;
 
 }  // namespace keymaster

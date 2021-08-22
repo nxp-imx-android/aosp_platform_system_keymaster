@@ -16,6 +16,7 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <optional>
 #include <string>
@@ -34,7 +35,10 @@
 
 namespace cppcose {
 
+template <typename T> class ErrMsgOr;
 using bytevec = std::vector<uint8_t>;
+using HmacSha256 = std::array<uint8_t, SHA256_DIGEST_LENGTH>;
+using HmacSha256Function = std::function<ErrMsgOr<HmacSha256>(const bytevec&)>;
 
 constexpr int kCoseSign1EntryCount = 4;
 constexpr int kCoseSign1ProtectedParams = 0;
@@ -231,10 +235,14 @@ class CoseKey {
     std::unique_ptr<cppbor::Map> key_;
 };
 
-ErrMsgOr<bytevec> generateCoseMac0Mac(const bytevec& macKey, const bytevec& externalAad,
-                                      const bytevec& payload);
-ErrMsgOr<cppbor::Array> constructCoseMac0(const bytevec& macKey, const bytevec& externalAad,
-                                          const bytevec& payload);
+// Utility function for generating an HMAC given a key and some input
+// data. Returns std::nullopt on error
+ErrMsgOr<HmacSha256> generateHmacSha256(const bytevec& key, const bytevec& data);
+
+ErrMsgOr<HmacSha256> generateCoseMac0Mac(HmacSha256Function macFunction, const bytevec& externalAad,
+                                         const bytevec& payload);
+ErrMsgOr<cppbor::Array> constructCoseMac0(HmacSha256Function macFunction,
+                                          const bytevec& externalAad, const bytevec& payload);
 ErrMsgOr<bytevec /* payload */> verifyAndParseCoseMac0(const cppbor::Item* macItem,
                                                        const bytevec& macKey);
 
@@ -247,17 +255,13 @@ ErrMsgOr<cppbor::Array> constructCoseSign1(const bytevec& key, cppbor::Map extra
 /**
  * Verify and parse a COSE_Sign1 message, returning the payload.
  *
- * @param ignoreSignature indicates whether signature verification should be skipped.  If true, no
- *        verification of the signature will be done.
- *
  * @param coseSign1 is the COSE_Sign1 to verify and parse.
  *
  * @param signingCoseKey is a CBOR-encoded COSE_Key to use to verify the signature.  The bytevec may
  *        be empty, in which case the function assumes that coseSign1's payload is the COSE_Key to
  *        use, i.e. that coseSign1 is a self-signed "certificate".
  */
-ErrMsgOr<bytevec /* payload */> verifyAndParseCoseSign1(bool ignoreSignature,
-                                                        const cppbor::Array* coseSign1,
+ErrMsgOr<bytevec /* payload */> verifyAndParseCoseSign1(const cppbor::Array* coseSign1,
                                                         const bytevec& signingCoseKey,
                                                         const bytevec& aad);
 
